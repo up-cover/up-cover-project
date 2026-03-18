@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { SseEmitter } from '../sse/sse-emitter.service';
 import { exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -25,6 +26,25 @@ type CoverageRunResult =
   | { ok: true; summaryPath: string }
   | { ok: false; reason: 'command_failed' | 'no_summary_found' };
 
+class ExecError extends Error {
+  constructor(
+    message: string,
+    public readonly stdout: string,
+    public readonly stderr: string,
+  ) {
+    super(message);
+    this.name = 'ExecError';
+  }
+}
+
+function isExecError(e: unknown): e is ExecError {
+  return e instanceof ExecError;
+}
+
+function toMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 @Injectable()
 export class ScanOrchestrator {
   constructor(
@@ -35,6 +55,7 @@ export class ScanOrchestrator {
     private readonly repositoryRepo: RepositoryRepository,
     private readonly scanJobRepo: ScanJobRepository,
     private readonly coverageFileRepo: CoverageFileRepository,
+    private readonly sseEmitter: SseEmitter,
   ) {}
 
   async startScan(repositoryId: string): Promise<IScanJob> {
@@ -66,6 +87,12 @@ export class ScanOrchestrator {
       scanError: null,
     });
 
+    this.sseEmitter.emit(`repo:${repositoryId}`, 'repo:updated', {
+      id: repositoryId,
+      scanStatus: ScanStatus.CLONING,
+      scanError: null,
+    });
+
     // Fire and forget
     this.runPipeline(repo, scanJob).catch(() => {});
 
@@ -74,9 +101,13 @@ export class ScanOrchestrator {
 
   private async runPipeline(repo: IRepository, scanJob: IScanJob): Promise<void> {
     let log = '';
+    const debugOutput = this.configService.get<string>('DEBUG_OUTPUT') === 'true';
 
     const appendLog = (line: string) => {
       log += line + '\n';
+      if (debugOutput) {
+        this.sseEmitter.emit(`repo:${repo.id}`, 'scan:log', { line });
+      }
     };
 
     const fail = async (errorMessage: string) => {
@@ -90,11 +121,20 @@ export class ScanOrchestrator {
         scanStatus: ScanStatus.FAILED,
         scanError: errorMessage,
       }).catch(() => {});
+      this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+        id: repo.id,
+        scanStatus: ScanStatus.FAILED,
+        scanError: errorMessage,
+      });
     };
 
     const transition = async (status: ScanStatus) => {
       await this.scanJobRepo.update(scanJob.id, { status, logOutput: log });
       await this.repositoryRepo.update(repo.id, { scanStatus: status });
+      this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+        id: repo.id,
+        scanStatus: status,
+      });
     };
 
     try {
@@ -105,7 +145,7 @@ export class ScanOrchestrator {
         await this.gitClient.clone(repo.url, scanJob.workDir, token);
         appendLog('Clone successful.');
       } catch (e) {
-        await fail(`CLONE_FAILED: Failed to clone repository: ${(e as Error).message}`);
+        await fail(`CLONE_FAILED: Failed to clone repository: ${toMessage(e)}`);
         return;
       }
 
@@ -117,13 +157,12 @@ export class ScanOrchestrator {
       try {
         detection = this.frameworkDetector.detect(scanJob.workDir);
       } catch (e) {
-        const err = e as Error;
-        if (err instanceof NoLockfileError) {
-          await fail(`NO_LOCKFILE: ${err.message}`);
-        } else if (err instanceof UnsupportedTestFrameworkError) {
-          await fail(`UNSUPPORTED_TEST_FRAMEWORK: ${err.message}`);
+        if (e instanceof NoLockfileError) {
+          await fail(`NO_LOCKFILE: ${e.message}`);
+        } else if (e instanceof UnsupportedTestFrameworkError) {
+          await fail(`UNSUPPORTED_TEST_FRAMEWORK: ${e.message}`);
         } else {
-          await fail(`SCANNING_FAILED: ${err.message}`);
+          await fail(`SCANNING_FAILED: ${toMessage(e)}`);
         }
         return;
       }
@@ -151,9 +190,10 @@ export class ScanOrchestrator {
         if (stderr) appendLog(stderr);
         appendLog('Installation complete.');
       } catch (e) {
-        const err = e as any;
-        if (err.stdout) appendLog(err.stdout);
-        if (err.stderr) appendLog(err.stderr);
+        if (isExecError(e)) {
+          if (e.stdout) appendLog(e.stdout);
+          if (e.stderr) appendLog(e.stderr);
+        }
         await fail('INSTALL_FAILED: Dependency installation failed. See log output for details.');
         return;
       }
@@ -176,9 +216,10 @@ export class ScanOrchestrator {
             if (stdout) appendLog(stdout);
             if (stderr) appendLog(stderr);
           } catch (e) {
-            const err = e as any;
-            if (err.stdout) appendLog(err.stdout);
-            if (err.stderr) appendLog(err.stderr);
+            if (isExecError(e)) {
+              if (e.stdout) appendLog(e.stdout);
+              if (e.stderr) appendLog(e.stderr);
+            }
             await fail('INSTALL_FAILED: Failed to install coverage provider. See log output for details.');
             return;
           }
@@ -196,9 +237,8 @@ export class ScanOrchestrator {
         appendLog,
       );
 
-      if (!result.ok) {
-        const failResult = result as { ok: false; reason: 'command_failed' | 'no_summary_found' };
-        if (failResult.reason === 'command_failed') {
+      if (result.ok === false) {
+        if (result.reason === 'command_failed') {
           await fail(
             'TESTS_FAILED: Test run failed — no coverage report was produced. See log output for details.',
           );
@@ -215,7 +255,7 @@ export class ScanOrchestrator {
       try {
         parseResult = this.coverageParser.parse(result.summaryPath, scanJob.workDir);
       } catch (e) {
-        await fail(`COVERAGE_PARSE_FAILED: ${(e as Error).message}`);
+        await fail(`COVERAGE_PARSE_FAILED: ${toMessage(e)}`);
         return;
       }
 
@@ -246,9 +286,12 @@ export class ScanOrchestrator {
         logOutput: log,
       });
       await this.repositoryRepo.update(repo.id, { scanStatus: ScanStatus.COMPLETE });
+      this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+        id: repo.id,
+        scanStatus: ScanStatus.COMPLETE,
+      });
     } catch (e) {
-      const err = e as Error;
-      await fail(`Unexpected error: ${err.message}`);
+      await fail(`Unexpected error: ${toMessage(e)}`);
     }
   }
 
@@ -268,9 +311,10 @@ export class ScanOrchestrator {
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
       } catch (e) {
-        const err = e as any;
-        if (err.stdout) appendLog(err.stdout);
-        if (err.stderr) appendLog(err.stderr);
+        if (isExecError(e)) {
+          if (e.stdout) appendLog(e.stdout);
+          if (e.stderr) appendLog(e.stderr);
+        }
         appendLog(`test:coverage failed with non-zero exit.`);
         return { ok: false, reason: 'command_failed' };
       }
@@ -286,9 +330,10 @@ export class ScanOrchestrator {
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
       } catch (e) {
-        const err = e as any;
-        if (err.stdout) appendLog(err.stdout);
-        if (err.stderr) appendLog(err.stderr);
+        if (isExecError(e)) {
+          if (e.stdout) appendLog(e.stdout);
+          if (e.stderr) appendLog(e.stderr);
+        }
         appendLog('coverage script failed with non-zero exit.');
         return { ok: false, reason: 'command_failed' };
       }
@@ -310,9 +355,10 @@ export class ScanOrchestrator {
       if (stdout) appendLog(stdout);
       if (stderr) appendLog(stderr);
     } catch (e) {
-      const err = e as any;
-      if (err.stdout) appendLog(err.stdout);
-      if (err.stderr) appendLog(err.stderr);
+      if (isExecError(e)) {
+        if (e.stdout) appendLog(e.stdout);
+        if (e.stderr) appendLog(e.stderr);
+      }
       appendLog('Fallback coverage command failed with non-zero exit.');
       return { ok: false, reason: 'command_failed' };
     }
@@ -361,10 +407,7 @@ export class ScanOrchestrator {
     return new Promise((resolve, reject) => {
       exec(cmd, { cwd, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
-          const e = error as any;
-          e.stdout = stdout;
-          e.stderr = stderr;
-          reject(e);
+          reject(new ExecError(error.message, stdout, stderr));
         } else {
           resolve({ stdout, stderr });
         }

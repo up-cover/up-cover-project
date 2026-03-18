@@ -35,8 +35,9 @@ export class RepositoriesService {
     try {
       const response = await this.octokit.repos.get({ owner, repo });
       repoData = response.data;
-    } catch (err: any) {
-      const status = err?.status;
+    } catch (err: unknown) {
+      const status =
+        typeof err === 'object' && err !== null && 'status' in err ? err.status : undefined;
       if (status === 401) {
         throw new HttpException(
           { error: 'INVALID_TOKEN', message: 'The configured GitHub token is invalid or expired.' },
@@ -75,7 +76,7 @@ export class RepositoriesService {
     let languages: Record<string, number>;
     try {
       const response = await this.octokit.repos.listLanguages({ owner, repo });
-      languages = response.data as Record<string, number>;
+      languages = response.data;
     } catch {
       languages = {};
     }
