@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { RepositoriesService } from './repositories.service';
 import { RegisterRepositoryDto } from './dto/register-repository.dto';
 
@@ -15,6 +15,20 @@ export class RepositoriesController {
   @Get()
   async findAll() {
     return this.repositoriesService.findAll();
+  }
+
+  @Get(':id')
+  async findOne(@Param('id') id: string) {
+    return this.repositoriesService.findById(id);
+  }
+
+  @Get(':id/coverage-files')
+  async getCoverageFiles(
+    @Param('id') id: string,
+    @Query('page') page = '1',
+    @Query('limit') limit = '50',
+  ) {
+    return this.repositoriesService.getCoverageFiles(id, Math.max(1, parseInt(page, 10) || 1), Math.min(200, Math.max(1, parseInt(limit, 10) || 50)));
   }
 
   @Get(':id/scan-log')

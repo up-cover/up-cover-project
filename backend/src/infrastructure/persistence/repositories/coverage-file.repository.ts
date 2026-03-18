@@ -16,6 +16,16 @@ export class CoverageFileRepository implements ICoverageFileRepository {
     return entities.map(this.toDomain);
   }
 
+  async findByRepositoryIdPaginated(repositoryId: string, skip: number, take: number): Promise<{ items: ICoverageFile[]; total: number }> {
+    const [entities, total] = await this.orm.findAndCount({
+      where: { repositoryId },
+      order: { coveragePct: 'ASC' },
+      skip,
+      take,
+    });
+    return { items: entities.map(this.toDomain), total };
+  }
+
   async findById(id: string): Promise<ICoverageFile | null> {
     const entity = await this.orm.findOneBy({ id });
     return entity ? this.toDomain(entity) : null;
@@ -41,6 +51,7 @@ export class CoverageFileRepository implements ICoverageFileRepository {
       branches: entity.branches,
       functions: entity.functions,
       lines: entity.lines,
+      fileSizeKb: entity.fileSizeKb,
     };
   }
 
@@ -54,6 +65,7 @@ export class CoverageFileRepository implements ICoverageFileRepository {
     entity.branches = domain.branches;
     entity.functions = domain.functions;
     entity.lines = domain.lines;
+    entity.fileSizeKb = domain.fileSizeKb;
     return entity;
   }
 }
