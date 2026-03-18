@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from './app.controller';
 import { HealthModule } from './health/health.module';
 import { RepositoriesModule } from './repositories/repositories.module';
+import { ScanModule } from './scan/scan.module';
 import {
   RepositoryEntity,
   ScanJobEntity,
@@ -17,6 +19,7 @@ import {
       isGlobal: true,
       envFilePath: '.env',
     }),
+    ScheduleModule.forRoot(),
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -29,6 +32,7 @@ import {
     }),
     HealthModule,
     RepositoriesModule,
+    ScanModule,
   ],
   controllers: [AppController],
 })
