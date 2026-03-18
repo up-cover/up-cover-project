@@ -52,16 +52,9 @@ If not found, fail with a clear error indicating coverage summary was not produc
 
 If tests require missing env vars/secrets and fail, mark scan FAILED with the test output. **Limitation:** no env passthrough/config UI.
 
-### Monorepo detection (intentionally strict)
+### Monorepo detection
 
-Reject the repo as a monorepo if any strong signal exists (err on the side of rejecting):
-
-- `workspaces` in root `package.json`
-- `pnpm-workspace.yaml`
-- `lerna.json`, `nx.json`, `turbo.json`
-- other credible workspace tooling indicators
-
-Surface `MONOREPO_DETECTED` with a clear message. **Limitation:** monorepos out of scope.
+Monorepo detection is disabled. The tool will attempt to scan any repo regardless of workspace tooling present.
 
 ### Improvement pipeline — test generation contract
 
