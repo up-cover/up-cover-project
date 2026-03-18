@@ -30,3 +30,22 @@ export async function listRepositories(): Promise<Repository[]> {
   }
   return res.json();
 }
+
+export async function fetchScanLog(id: string): Promise<string[]> {
+  const res = await fetch(`/api/repositories/${id}/scan-log`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return Array.isArray(data.lines) ? data.lines : [];
+}
+
+export async function startScan(id: string): Promise<void> {
+  const res = await fetch(`/api/repositories/${id}/scan`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err: ApiError = {
+      error: data.error ?? 'UNKNOWN_ERROR',
+      message: data.message ?? 'Failed to start scan.',
+    };
+    throw err;
+  }
+}

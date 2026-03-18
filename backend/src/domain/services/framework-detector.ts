@@ -13,13 +13,6 @@ export interface DetectionResult {
   packageJson: any;
 }
 
-export class NoLockfileError extends Error {
-  constructor() {
-    super('No supported package manager lockfile found. Supported: npm, yarn, pnpm.');
-    this.name = 'NoLockfileError';
-  }
-}
-
 export class UnsupportedTestFrameworkError extends Error {
   constructor() {
     super('No supported test framework detected. Supported: Jest, Vitest.');
@@ -32,7 +25,7 @@ export class FrameworkDetector {
   detect(workDir: string): DetectionResult {
     const packageJson = this.readPackageJson(workDir);
 
-    const packageManager = this.detectPackageManager(workDir);
+    const packageManager = this.detectPackageManager(workDir, packageJson);
     const testFramework = this.detectTestFramework(workDir, packageJson);
     const coverageFramework = this.detectCoverageFramework(workDir, testFramework);
     const totalTsFiles = this.countTsFiles(workDir);
@@ -50,11 +43,20 @@ export class FrameworkDetector {
     }
   }
 
-  private detectPackageManager(workDir: string): PackageManager {
+  private detectPackageManager(workDir: string, pkg: any): PackageManager {
+    // 1. Lockfile detection (most reliable)
     if (fs.existsSync(path.join(workDir, 'pnpm-lock.yaml'))) return PackageManager.PNPM;
     if (fs.existsSync(path.join(workDir, 'yarn.lock'))) return PackageManager.YARN;
     if (fs.existsSync(path.join(workDir, 'package-lock.json'))) return PackageManager.NPM;
-    throw new NoLockfileError();
+
+    // 2. package.json "packageManager" field (e.g. "pnpm@8.0.0")
+    const pm: string = pkg.packageManager ?? '';
+    if (pm.startsWith('pnpm')) return PackageManager.PNPM;
+    if (pm.startsWith('yarn')) return PackageManager.YARN;
+    if (pm.startsWith('npm')) return PackageManager.NPM;
+
+    // 3. Default to npm (ships with Node.js)
+    return PackageManager.NPM;
   }
 
   private detectTestFramework(workDir: string, pkg: any): TestFramework {

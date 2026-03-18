@@ -1,15 +1,31 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Repository } from '../types/repository';
+import { useSSE } from '../hooks/useSSE';
+import { startScan, fetchScanLog } from '../api/repositories';
+import { DebugLog } from './DebugLog';
+
+const pct = (n: number) => `${Number(n.toFixed(2))}%`;
+
+const ACTIVE_STATUSES = new Set<Repository['scanStatus']>([
+  'CLONING',
+  'SCANNING',
+  'INSTALLING',
+  'TESTING',
+]);
 
 interface RepoCardProps {
   repository: Repository;
 }
 
 function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
-  const map: Record<Repository['scanStatus'], { label: string; variant: React.ComponentProps<typeof Badge>['variant'] }> = {
+  const map: Record<
+    Repository['scanStatus'],
+    { label: string; variant: React.ComponentProps<typeof Badge>['variant'] }
+  > = {
     NOT_STARTED: { label: 'not started', variant: 'muted' },
     CLONING: { label: 'cloning', variant: 'warning' },
     SCANNING: { label: 'scanning', variant: 'warning' },
@@ -22,21 +38,94 @@ function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
   return <Badge variant={variant}>{label}</Badge>;
 }
 
-export function RepoCard({ repository }: RepoCardProps) {
-  const { owner, name, url, scanStatus, scanError } = repository;
+
+export function RepoCard({ repository: initial }: RepoCardProps) {
+  const [repo, setRepo] = useState<Repository>(initial);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [starting, setStarting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Load persisted log on mount (backend only returns lines when DEBUG_OUTPUT=true)
+  useEffect(() => {
+    fetchScanLog(repo.id).then((lines) => {
+      if (lines.length > 0) setLogs(lines);
+    });
+  }, [repo.id]);
+
+  useSSE(`/api/sse/repositories/${repo.id}`, {
+    'repo:updated': (data) => {
+      setRepo((r) => ({ ...r, ...(data as Partial<Repository>) }));
+    },
+    'scan:log': (data) => {
+      const line =
+        typeof data === 'string'
+          ? data
+          : typeof (data as { line?: string }).line === 'string'
+            ? (data as { line: string }).line
+            : JSON.stringify(data);
+      setLogs((prev) => [...prev, line]);
+    },
+  });
+
+  const handleScan = async () => {
+    setActionError(null);
+    setStarting(true);
+    setLogs([]);
+    try {
+      await startScan(repo.id);
+    } catch (err) {
+      const apiErr = err as { message?: string };
+      setActionError(apiErr.message ?? 'Failed to start scan.');
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const { owner, name, url, scanStatus, scanError } = repo;
+  const isActive = ACTIVE_STATUSES.has(scanStatus);
 
   const fields: { label: string; value: React.ReactNode }[] = [
     { label: 'Owner', value: owner },
     { label: 'Repository', value: name },
-    { label: 'URL', value: <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">{url}</a> },
+    {
+      label: 'URL',
+      value: (
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline break-all"
+        >
+          {url}
+        </a>
+      ),
+    },
     { label: 'Has TypeScript', value: 'true' },
-    { label: 'Total TS files', value: repository.totalTsFiles ?? '—' },
-    { label: 'Package manager', value: repository.packageManager ?? '—' },
-    { label: 'Test framework', value: repository.testFramework ?? '—' },
-    { label: 'Coverage framework', value: repository.coverageFramework ?? '—' },
-    { label: 'Total TS coverage', value: repository.totalCoverage != null ? `${repository.totalCoverage}%` : '—' },
-    { label: 'Avg TS coverage', value: repository.avgCoverage != null ? `${repository.avgCoverage}%` : '—' },
-    { label: 'Min TS coverage', value: repository.minCoverage != null ? `${repository.minCoverage.pct}%` : '—' },
+    { label: 'Total TS files', value: repo.totalTsFiles ?? '—' },
+    {
+      label: 'Package manager',
+      value: repo.packageManager ? <Badge variant="success">{repo.packageManager}</Badge> : '—',
+    },
+    {
+      label: 'Test framework',
+      value: repo.testFramework ? <Badge variant="success">{repo.testFramework}</Badge> : '—',
+    },
+    {
+      label: 'Coverage framework',
+      value: repo.coverageFramework ? <Badge variant="success">{repo.coverageFramework}</Badge> : '—',
+    },
+    {
+      label: 'Total TS coverage',
+      value: repo.totalCoverage != null ? pct(repo.totalCoverage) : '—',
+    },
+    {
+      label: 'Avg TS coverage',
+      value: repo.avgCoverage != null ? pct(repo.avgCoverage) : '—',
+    },
+    {
+      label: 'Min TS coverage',
+      value: repo.minCoverage != null ? pct(repo.minCoverage.pct) : '—',
+    },
     { label: 'Scan status', value: <ScanStatusBadge status={scanStatus} /> },
   ];
 
@@ -63,16 +152,30 @@ export function RepoCard({ repository }: RepoCardProps) {
           </div>
         )}
 
-        <div className="flex gap-2 pt-1">
+        {actionError && (
+          <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2">
+            <p className="text-xs text-red-700">{actionError}</p>
+          </div>
+        )}
+
+        {logs.length > 0 && <DebugLog lines={logs} />}
+
+        <div className="flex items-center gap-2 pt-1">
           {(scanStatus === 'NOT_STARTED' || scanStatus === 'FAILED') && (
-            <Button size="sm" variant="default" disabled>
-              {scanStatus === 'FAILED' ? 'Rescan' : 'Start Scan'}
+            <Button size="sm" variant="default" onClick={handleScan} disabled={starting}>
+              {starting ? 'Starting…' : scanStatus === 'FAILED' ? 'Rescan' : 'Start Scan'}
             </Button>
           )}
           {scanStatus === 'COMPLETE' && (
-            <Button size="sm" variant="outline" disabled>
+            <Link
+              to={`/repos/${repo.id}`}
+              className={buttonVariants({ variant: 'outline', size: 'sm' })}
+            >
               View Details
-            </Button>
+            </Link>
+          )}
+          {isActive && (
+            <span className="text-xs text-gray-400">Scan in progress…</span>
           )}
         </div>
       </CardContent>
