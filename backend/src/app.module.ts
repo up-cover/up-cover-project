@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { HealthModule } from './health/health.module';
+import { RepositoriesModule } from './repositories/repositories.module';
 import {
   RepositoryEntity,
   ScanJobEntity,
@@ -27,6 +28,7 @@ import {
       }),
     }),
     HealthModule,
+    RepositoriesModule,
   ],
   controllers: [AppController],
 })
