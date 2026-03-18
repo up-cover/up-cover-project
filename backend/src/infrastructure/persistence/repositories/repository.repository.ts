@@ -1,12 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { RepositoryEntity } from '../entities/repository.entity';
 import {
   IRepository,
   IRepositoryRepository,
   MinCoverage,
 } from '../../../domain/interfaces';
+import { ScanStatus } from '../../../domain/enums/scan-status.enum';
 
 @Injectable()
 export class RepositoryRepository implements IRepositoryRepository {
@@ -17,6 +18,15 @@ export class RepositoryRepository implements IRepositoryRepository {
 
   async findAll(): Promise<IRepository[]> {
     const entities = await this.orm.find({ order: { createdAt: 'DESC' } });
+    return entities.map(this.toDomain);
+  }
+
+  async findAllInProgress(): Promise<IRepository[]> {
+    const entities = await this.orm.find({
+      where: {
+        scanStatus: In([ScanStatus.CLONING, ScanStatus.SCANNING, ScanStatus.INSTALLING, ScanStatus.TESTING]),
+      },
+    });
     return entities.map(this.toDomain);
   }
 

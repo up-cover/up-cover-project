@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SseEmitter } from '../sse/sse-emitter.service';
 import { exec } from 'child_process';
@@ -14,7 +14,6 @@ import { GitClient } from '../infrastructure/git/git-client';
 import {
   FrameworkDetector,
   DetectionResult,
-  NoLockfileError,
   UnsupportedTestFrameworkError,
 } from '../domain/services/framework-detector';
 import { CoverageParser, CoverageParseResult } from '../domain/services/coverage-parser';
@@ -46,7 +45,7 @@ function toMessage(e: unknown): string {
 }
 
 @Injectable()
-export class ScanOrchestrator {
+export class ScanOrchestrator implements OnApplicationBootstrap {
   constructor(
     private readonly configService: ConfigService,
     private readonly gitClient: GitClient,
@@ -57,6 +56,24 @@ export class ScanOrchestrator {
     private readonly coverageFileRepo: CoverageFileRepository,
     private readonly sseEmitter: SseEmitter,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    const stale = await this.repositoryRepo.findAllInProgress();
+    const errorMessage = 'INTERRUPTED: Server restarted while scan was in progress.';
+    for (const repo of stale) {
+      await this.repositoryRepo.update(repo.id, {
+        scanStatus: ScanStatus.FAILED,
+        scanError: errorMessage,
+      }).catch(() => {});
+      const latestJob = await this.scanJobRepo.findLatestByRepositoryId(repo.id);
+      if (latestJob) {
+        await this.scanJobRepo.update(latestJob.id, {
+          status: ScanStatus.FAILED,
+          errorMessage,
+        }).catch(() => {});
+      }
+    }
+  }
 
   async startScan(repositoryId: string): Promise<IScanJob> {
     const repo = await this.repositoryRepo.findById(repositoryId);
@@ -157,9 +174,7 @@ export class ScanOrchestrator {
       try {
         detection = this.frameworkDetector.detect(scanJob.workDir);
       } catch (e) {
-        if (e instanceof NoLockfileError) {
-          await fail(`NO_LOCKFILE: ${e.message}`);
-        } else if (e instanceof UnsupportedTestFrameworkError) {
+        if (e instanceof UnsupportedTestFrameworkError) {
           await fail(`UNSUPPORTED_TEST_FRAMEWORK: ${e.message}`);
         } else {
           await fail(`SCANNING_FAILED: ${toMessage(e)}`);
@@ -173,6 +188,14 @@ export class ScanOrchestrator {
       appendLog(`TypeScript files: ${detection.totalTsFiles}`);
 
       await this.repositoryRepo.update(repo.id, {
+        packageManager: detection.packageManager,
+        testFramework: detection.testFramework,
+        coverageFramework: detection.coverageFramework,
+        totalTsFiles: detection.totalTsFiles,
+      });
+
+      this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+        id: repo.id,
         packageManager: detection.packageManager,
         testFramework: detection.testFramework,
         coverageFramework: detection.coverageFramework,
@@ -232,6 +255,7 @@ export class ScanOrchestrator {
 
       const result = await this.runCoverageWithFallback(
         detection.packageJson,
+        detection.packageManager,
         detection.testFramework,
         scanJob.workDir,
         appendLog,
@@ -274,6 +298,13 @@ export class ScanOrchestrator {
         minCoverage: parseResult.minCoverage,
       });
 
+      this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+        id: repo.id,
+        totalCoverage: parseResult.totalCoverage,
+        avgCoverage: parseResult.avgCoverage,
+        minCoverage: parseResult.minCoverage,
+      });
+
       appendLog(`Coverage parsed: ${coverageFileRecords.length} files.`);
       if (parseResult.totalCoverage !== null) {
         appendLog(`Total coverage: ${parseResult.totalCoverage.toFixed(2)}%`);
@@ -297,6 +328,7 @@ export class ScanOrchestrator {
 
   private async runCoverageWithFallback(
     packageJson: any,
+    packageManager: PackageManager,
     testFramework: TestFramework,
     workDir: string,
     appendLog: (line: string) => void,
@@ -305,9 +337,10 @@ export class ScanOrchestrator {
 
     // Step 1: scripts.test:coverage
     if (scripts['test:coverage']) {
-      appendLog(`Running: npm run test:coverage`);
+      const cmd = this.getRunScriptCommand(packageManager, 'test:coverage');
+      appendLog(`Running: ${cmd}`);
       try {
-        const { stdout, stderr } = await this.runCmd(scripts['test:coverage'], workDir);
+        const { stdout, stderr } = await this.runCmd(cmd, workDir);
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
       } catch (e) {
@@ -324,9 +357,11 @@ export class ScanOrchestrator {
       // Fall through to step 3 (skip step 2)
     } else if (scripts['coverage']) {
       // Step 2: scripts.coverage (only if step 1 did not exist)
-      appendLog(`Running: npm run coverage`);
+      const cmd = this.getRunScriptCommand(packageManager, 'coverage');
+      appendLog(`Running: ${cmd}`);
+      let step2Failed = false;
       try {
-        const { stdout, stderr } = await this.runCmd(scripts['coverage'], workDir);
+        const { stdout, stderr } = await this.runCmd(cmd, workDir);
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
       } catch (e) {
@@ -334,20 +369,25 @@ export class ScanOrchestrator {
           if (e.stdout) appendLog(e.stdout);
           if (e.stderr) appendLog(e.stderr);
         }
-        appendLog('coverage script failed with non-zero exit.');
-        return { ok: false, reason: 'command_failed' };
+        appendLog('coverage script failed with non-zero exit — falling back to step 3.');
+        step2Failed = true;
       }
-      const found = this.coverageParser.findCoverageSummary(workDir);
-      if (found) return { ok: true, summaryPath: found };
-      appendLog('coverage-summary.json not found after coverage script — falling back to step 3.');
+      if (!step2Failed) {
+        const found = this.coverageParser.findCoverageSummary(workDir);
+        if (found) return { ok: true, summaryPath: found };
+        appendLog('coverage-summary.json not found after coverage script — falling back to step 3.');
+      }
       // Fall through to step 3
     }
 
     // Step 3: framework fallback
+    // Inherit env var prefixes (e.g. NODE_OPTIONS=--experimental-vm-modules) from the
+    // repo's test/ci-test script so ESM repos work correctly.
+    const envPrefix = this.extractEnvPrefix(scripts);
     const fallbackCmd =
       testFramework === TestFramework.JEST
-        ? 'npx jest --coverage --coverageReporters=json-summary'
-        : 'npx vitest run --coverage --coverage.reporter=json-summary';
+        ? `${envPrefix}npx jest --coverage --coverageReporters=json-summary`
+        : `${envPrefix}npx vitest run --coverage --coverage.reporter=json-summary`;
 
     appendLog(`Running fallback: ${fallbackCmd}`);
     try {
@@ -392,6 +432,17 @@ export class ScanOrchestrator {
     }
   }
 
+  private getRunScriptCommand(packageManager: PackageManager, script: string): string {
+    switch (packageManager) {
+      case PackageManager.PNPM:
+        return `pnpm run ${script}`;
+      case PackageManager.YARN:
+        return `yarn ${script}`;
+      case PackageManager.NPM:
+        return `npm run ${script}`;
+    }
+  }
+
   private getCoverageProviderInstallCommand(packageManager: PackageManager, pkg: string): string {
     switch (packageManager) {
       case PackageManager.PNPM:
@@ -403,9 +454,27 @@ export class ScanOrchestrator {
     }
   }
 
-  private runCmd(cmd: string, cwd: string): Promise<{ stdout: string; stderr: string }> {
+  /**
+   * Extracts leading KEY=VALUE env var assignments from the repo's test script
+   * so the fallback command can inherit them (e.g. NODE_OPTIONS=--experimental-vm-modules).
+   */
+  private extractEnvPrefix(scripts: Record<string, string>): string {
+    for (const key of ['test', 'ci-test']) {
+      const script = scripts[key];
+      if (!script) continue;
+      // Only apply when the script is running jest/vitest
+      if (!script.includes('jest') && !script.includes('vitest')) continue;
+      // Match one or more KEY=VALUE pairs at the start of the command
+      const m = script.match(/^((?:[A-Z_]+=\S+\s+)+)/);
+      if (m) return m[1];
+    }
+    return '';
+  }
+
+  private runCmd(cmd: string, cwd: string, timeoutMs = 10 * 60 * 1000): Promise<{ stdout: string; stderr: string }> {
     return new Promise((resolve, reject) => {
-      exec(cmd, { cwd, maxBuffer: 50 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0', CI: '1' };
+      exec(cmd, { cwd, env, maxBuffer: 50 * 1024 * 1024, timeout: timeoutMs }, (error, stdout, stderr) => {
         if (error) {
           reject(new ExecError(error.message, stdout, stderr));
         } else {

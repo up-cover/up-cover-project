@@ -6,7 +6,8 @@
   "scripts": {
     "start:dev": "ts-node -r tsconfig-paths/register src/main.ts",
     "build": "tsc",
-    "reset": "rm -rf ./data ./workspaces && echo 'Cleared data/ and workspaces/'"
+    "reset": "rm -rf ./data ./workspaces && echo 'Cleared data/ and workspaces/'",
+    "dump-logs": "ts-node scripts/dump-scan-logs.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

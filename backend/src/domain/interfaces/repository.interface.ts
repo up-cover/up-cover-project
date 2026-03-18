@@ -29,6 +29,7 @@ export interface IRepository {
 
 export interface IRepositoryRepository {
   findAll(): Promise<IRepository[]>;
+  findAllInProgress(): Promise<IRepository[]>;
   findById(id: string): Promise<IRepository | null>;
   findByOwnerAndName(owner: string, name: string): Promise<IRepository | null>;
   save(repository: IRepository): Promise<IRepository>;

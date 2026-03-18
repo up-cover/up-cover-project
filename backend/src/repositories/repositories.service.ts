@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 import { randomUUID } from 'crypto';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
+import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
 import { IRepository } from '../domain/interfaces';
 import { ScanStatus } from '../domain/enums/scan-status.enum';
 
@@ -13,6 +14,7 @@ export class RepositoriesService {
 
   constructor(
     private readonly repoRepository: RepositoryRepository,
+    private readonly scanJobRepository: ScanJobRepository,
     private readonly configService: ConfigService,
   ) {
     const token = this.configService.get<string>('GITHUB_TOKEN');
@@ -124,5 +126,12 @@ export class RepositoriesService {
 
   async findAll(): Promise<IRepository[]> {
     return this.repoRepository.findAll();
+  }
+
+  async getScanLog(repositoryId: string): Promise<string[]> {
+    if (this.configService.get<string>('DEBUG_OUTPUT') !== 'true') return [];
+    const job = await this.scanJobRepository.findLatestByRepositoryId(repositoryId);
+    if (!job?.logOutput) return [];
+    return job.logOutput.split('\n').filter((l) => l.length > 0);
   }
 }
