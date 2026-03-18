@@ -3,6 +3,12 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { HealthModule } from './health/health.module';
+import {
+  RepositoryEntity,
+  ScanJobEntity,
+  CoverageFileEntity,
+  ImprovementJobEntity,
+} from './infrastructure/persistence/entities';
 
 @Module({
   imports: [
@@ -17,7 +23,7 @@ import { HealthModule } from './health/health.module';
         type: 'better-sqlite3',
         database: configService.get<string>('DB_PATH', './data/upcover.db'),
         synchronize: true,
-        entities: [],
+        entities: [RepositoryEntity, ScanJobEntity, CoverageFileEntity, ImprovementJobEntity],
       }),
     }),
     HealthModule,
