@@ -68,6 +68,16 @@ export class CoverageParser {
         relPath = path.relative(workDir, filePath);
       }
 
+      // Capture file size
+      let fileSizeKb: number | null = null;
+      try {
+        const absPath = path.isAbsolute(filePath) ? filePath : path.join(workDir, filePath);
+        const stat = fs.statSync(absPath);
+        fileSizeKb = stat.size / 1024;
+      } catch {
+        // file may not exist (e.g. workdir cleaned up)
+      }
+
       // coveragePct = lines.pct only, per global rules
       coverageFiles.push({
         filePath: relPath,
@@ -76,6 +86,7 @@ export class CoverageParser {
         branches,
         functions,
         lines,
+        fileSizeKb,
       });
     }
 

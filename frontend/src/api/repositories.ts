@@ -1,4 +1,4 @@
-import { Repository, ApiError } from '../types/repository';
+import { Repository, CoverageFilesPage, ApiError } from '../types/repository';
 
 export async function registerRepository(
   owner: string,
@@ -36,6 +36,18 @@ export async function fetchScanLog(id: string): Promise<string[]> {
   if (!res.ok) return [];
   const data = await res.json();
   return Array.isArray(data.lines) ? data.lines : [];
+}
+
+export async function fetchRepository(id: string): Promise<Repository> {
+  const res = await fetch(`/api/repositories/${id}`);
+  if (!res.ok) throw new Error('Failed to load repository');
+  return res.json();
+}
+
+export async function fetchCoverageFiles(id: string, page = 1, limit = 50): Promise<CoverageFilesPage> {
+  const res = await fetch(`/api/repositories/${id}/coverage-files?page=${page}&limit=${limit}`);
+  if (!res.ok) throw new Error('Failed to load coverage files');
+  return res.json();
 }
 
 export async function startScan(id: string): Promise<void> {

@@ -1,10 +1,11 @@
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 import { randomUUID } from 'crypto';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
-import { IRepository } from '../domain/interfaces';
+import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
+import { IRepository, ICoverageFile } from '../domain/interfaces';
 import { ScanStatus } from '../domain/enums/scan-status.enum';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class RepositoriesService {
   constructor(
     private readonly repoRepository: RepositoryRepository,
     private readonly scanJobRepository: ScanJobRepository,
+    private readonly coverageFileRepository: CoverageFileRepository,
     private readonly configService: ConfigService,
   ) {
     const token = this.configService.get<string>('GITHUB_TOKEN');
@@ -126,6 +128,23 @@ export class RepositoriesService {
 
   async findAll(): Promise<IRepository[]> {
     return this.repoRepository.findAll();
+  }
+
+  async findById(id: string): Promise<IRepository> {
+    const repo = await this.repoRepository.findById(id);
+    if (!repo) throw new NotFoundException(`Repository ${id} not found`);
+    return repo;
+  }
+
+  async getCoverageFiles(
+    repositoryId: string,
+    page: number,
+    limit: number,
+  ): Promise<{ items: ICoverageFile[]; total: number; page: number; limit: number }> {
+    await this.findById(repositoryId);
+    const skip = (page - 1) * limit;
+    const { items, total } = await this.coverageFileRepository.findByRepositoryIdPaginated(repositoryId, skip, limit);
+    return { items, total, page, limit };
   }
 
   async getScanLog(repositoryId: string): Promise<string[]> {

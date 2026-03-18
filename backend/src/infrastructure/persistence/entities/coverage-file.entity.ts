@@ -26,4 +26,7 @@ export class CoverageFileEntity {
 
   @Column({ type: 'real' })
   lines: number;
+
+  @Column({ name: 'file_size_kb', type: 'real', nullable: true })
+  fileSizeKb: number | null;
 }
