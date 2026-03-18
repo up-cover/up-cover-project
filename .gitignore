@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Environment
+.env
+!.env.example
+
+# SQLite database
+data/
+*.db
+*.db-journal
+
+# Workspaces (cloned repos)
+workspaces/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
