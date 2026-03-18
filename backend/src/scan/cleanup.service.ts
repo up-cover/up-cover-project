@@ -46,7 +46,7 @@ export class CleanupService implements OnModuleInit, OnModuleDestroy {
             deleted++;
             this.logger.log(`Deleted failed workspace: ${job.workDir}`);
           } catch (e) {
-            this.logger.warn(`Failed to delete workspace ${job.workDir}: ${(e as Error).message}`);
+            this.logger.warn(`Failed to delete workspace ${job.workDir}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
@@ -55,7 +55,7 @@ export class CleanupService implements OnModuleInit, OnModuleDestroy {
         this.logger.log(`Cleanup complete: removed ${deleted} failed workspace(s).`);
       }
     } catch (e) {
-      this.logger.error(`Cleanup error: ${(e as Error).message}`);
+      this.logger.error(`Cleanup error: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }

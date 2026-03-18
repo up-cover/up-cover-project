@@ -37,28 +37,30 @@ export class CoverageParser {
   }
 
   parse(summaryPath: string, workDir: string): CoverageParseResult {
-    let raw: any;
+    let raw: unknown;
     try {
       raw = JSON.parse(fs.readFileSync(summaryPath, 'utf-8'));
     } catch (e) {
-      throw new Error(`Could not parse coverage-summary.json: ${(e as Error).message}`);
+      throw new Error(`Could not parse coverage-summary.json: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error('coverage-summary.json has unexpected format');
     }
 
     const coverageFiles: Omit<ICoverageFile, 'id' | 'repositoryId'>[] = [];
     let totalCoverage: number | null = null;
 
     for (const [filePath, data] of Object.entries(raw)) {
-      const fileData = data as any;
-
       if (filePath === 'total') {
-        totalCoverage = fileData?.lines?.pct ?? null;
+        totalCoverage = data?.lines?.pct ?? null;
         continue;
       }
 
-      const lines = fileData?.lines?.pct ?? 0;
-      const statements = fileData?.statements?.pct ?? 0;
-      const branches = fileData?.branches?.pct ?? 0;
-      const functions = fileData?.functions?.pct ?? 0;
+      const lines = data?.lines?.pct ?? 0;
+      const statements = data?.statements?.pct ?? 0;
+      const branches = data?.branches?.pct ?? 0;
+      const functions = data?.functions?.pct ?? 0;
 
       // Make path relative to workDir if absolute
       let relPath = filePath;
