@@ -75,10 +75,9 @@ NOT_STARTED ──► CLONING ──► SCANNING ──► INSTALLING ──► 
 
 **SCANNING**
 - Count `.ts` / `.tsx` files (excluding `node_modules`, `dist`, `.git`)
-- Detect package manager via lockfile (`package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm)
-- Detect test framework via `package.json` devDependencies (`jest` or `vitest`) or presence of `jest.config.*` / `vitest.config.*`
-- Detect coverage framework from test config (`istanbul`/`c8` for Jest, `v8` for Vitest)
-- Detect monorepo (intentionally strict; fail on any strong signal): `workspaces` key in root `package.json`, `pnpm-workspace.yaml`, `lerna.json`, `nx.json`, `turbo.json`, or other credible workspace tooling indicators → FAILED with `MONOREPO_DETECTED`
+- Detect package manager via lockfile (`package-lock.json` → npm, `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm) or `package.json` `packageManager` field, defaulting to npm
+- Detect test framework via `package.json` devDependencies/dependencies (`jest` or `vitest`) or presence of `jest.config.*` / `vitest.config.*`
+- Detect coverage framework from test config (`istanbul` for Jest default, `v8` for Vitest default or when explicitly configured)
 - Validate all detected frameworks against supported matrix; unsupported → FAILED
 - Emit each detection result as a `scan:log` line (e.g. `"detected package manager: pnpm"`) (if `DEBUG_OUTPUT`)
 - Update repo fields and emit `repo:updated`. Show green badge per framework if supported, red if not.
@@ -102,7 +101,7 @@ NOT_STARTED ──► CLONING ──► SCANNING ──► INSTALLING ──► 
 
 **On any failure:**
 - Display error message in card
-- Show "Rescan" button (only available when `scanStatus === FAILED`)
+- Show "Rescan" button (UI shows "Rescan" when `scanStatus === FAILED`; backend accepts `POST /scan` at any time)
 - Failed workspace directory is **not deleted** — retained for debugging
 - `CleanupService` purges failed workspace directories on the `CLEANUP_INTERVAL_MS` schedule
 
@@ -155,12 +154,15 @@ QUEUED ──► CLONING ──► GENERATING ──► TESTING ──► PUSHIN
 - Emit `job:updated`
 
 **GENERATING**
-- Construct Ollama prompt containing:
+- Construct LLM prompt containing:
   - The source file contents (`filePath`)
   - The existing test file contents (if a co-located `*.test.ts` or `*.spec.ts` exists)
   - `CONTRIBUTING.md` from repo root (if present)
+  - `AGENTS.md` or `CLAUDE.md` from repo root (if present) — project conventions
+  - `package.json` (nearest to the source file)
+  - Related files (imports, adjacent helpers, types) — each below `FILE_SIZE_LIMIT_KB`
   - Instruction: generate a complete, passing `*.test.ts` file that improves coverage
-- Stream Ollama response tokens to `logOutput`; emit each token/line as `job:log` (if `DEBUG_OUTPUT`)
+- Stream LLM response tokens to `logOutput`; emit each token/line as `job:log` (if `DEBUG_OUTPUT`)
 - Write completed generated content to the test file path
 
 **TESTING**

@@ -8,8 +8,9 @@ Implement **Stage 10 — Cleanup Service** only.
 
 Backend:
 - Implement `CleanupService` with `@nestjs/schedule` `@Interval`.
-- Scan `CLONE_DIR` for failed scan workspace directories matching `{repoId}-{scanJobId}`.
-- Delete directories older than `CLEANUP_INTERVAL_MS` where DB `ScanJob.status === FAILED`.
+- Scan `CLONE_DIR` every `CLEANUP_INTERVAL_MS`:
+  - **Scan workspaces** (`{repoId}-{scanJobId}`): Delete if `ScanJob.status === FAILED` and older than interval, or if job record is orphaned (e.g. repo deleted).
+  - **Improvement workspaces** (`improve-{jobId}`): Delete if job record no longer exists (orphaned).
 
 Constraints:
 - Follow `00_GLOBAL_RULES.md` exactly.

@@ -11,8 +11,11 @@
 | `POST` | `/api/repositories` | Register a new repository. Validates PAT + TypeScript presence. |
 | `GET` | `/api/repositories` | List all registered repositories with their current scan status. |
 | `GET` | `/api/repositories/:id` | Repository detail including all metadata. |
-| `POST` | `/api/repositories/:id/scan` | Start (or restart) a scan. Only allowed when `scanStatus` is `NOT_STARTED` or `FAILED`. |
+| `DELETE` | `/api/repositories/:id` | Delete repository and related data (coverage files, scan jobs, improvement jobs). |
+| `POST` | `/api/repositories/:id/scan` | Start (or restart) a scan. |
+| `GET` | `/api/repositories/:id/scan-log` | Scan log lines (returns data only when `DEBUG_OUTPUT=true`). |
 | `GET` | `/api/repositories/:id/coverage-files` | Paginated coverage file list, sorted by `coverage_pct` ascending. |
+| `GET` | `/api/repositories/:id/files/:fileId/improvement-jobs` | List improvement jobs for a coverage file. |
 | `POST` | `/api/repositories/:id/files/:fileId/improve` | Enqueue an improvement job for the given coverage file. |
 | `DELETE` | `/api/improvement-jobs/:jobId` | Cancel an improvement job and clean up its workspace directory. |
 

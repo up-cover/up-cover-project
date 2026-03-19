@@ -74,8 +74,9 @@ Build in this order. Each stage should be functionally complete before proceedin
 
 ### Stage 10 — Cleanup Service
 - `CleanupService` using `@nestjs/schedule` `@Interval` decorator
-- Scans `CLONE_DIR` for directories matching `{repoId}-{scanJobId}` whose `ScanJob` has `status: FAILED`
-- Deletes directories older than `CLEANUP_INTERVAL_MS`
+- Scans `CLONE_DIR` every `CLEANUP_INTERVAL_MS`:
+  - **Scan workspaces** (`{repoId}-{scanJobId}`): Delete if `ScanJob.status === FAILED` and older than interval, or if job record is orphaned (e.g. repo deleted)
+  - **Improvement workspaces** (`improve-{jobId}`): Delete if job record no longer exists (orphaned)
 
 ### Stage 11 — Documentation
 - `README.md` with setup, prerequisites, demo walkthrough
