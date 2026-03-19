@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SseEmitter } from '../sse/sse-emitter.service';
 import { exec } from 'child_process';
@@ -46,6 +46,8 @@ function toMessage(e: unknown): string {
 
 @Injectable()
 export class ScanOrchestrator implements OnApplicationBootstrap {
+  private readonly logger = new Logger(ScanOrchestrator.name);
+
   constructor(
     private readonly configService: ConfigService,
     private readonly gitClient: GitClient,
@@ -61,6 +63,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
     const stale = await this.repositoryRepo.findAllInProgress();
     const errorMessage = 'INTERRUPTED: Server restarted while scan was in progress.';
     for (const repo of stale) {
+      this.logger.warn(`[${repo.owner}/${repo.name}] interrupted mid-scan — marking FAILED`);
       await this.repositoryRepo.update(repo.id, {
         scanStatus: ScanStatus.FAILED,
         scanError: errorMessage,
@@ -110,6 +113,8 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       scanError: null,
     });
 
+    this.logger.log(`[${repo.owner}/${repo.name}] scan started (job=${scanJobId})`);
+
     // Fire and forget
     this.runPipeline(repo, scanJob).catch(() => {});
 
@@ -127,7 +132,10 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       }
     };
 
+    const tag = `[${repo.owner}/${repo.name}]`;
+
     const fail = async (errorMessage: string) => {
+      this.logger.error(`${tag} FAILED: ${errorMessage}`);
       appendLog(`ERROR: ${errorMessage}`);
       await this.scanJobRepo.update(scanJob.id, {
         status: ScanStatus.FAILED,
@@ -146,6 +154,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
     };
 
     const transition = async (status: ScanStatus) => {
+      this.logger.log(`${tag} → ${status}`);
       await this.scanJobRepo.update(scanJob.id, { status, logOutput: log });
       await this.repositoryRepo.update(repo.id, { scanStatus: status });
       this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
@@ -161,6 +170,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       try {
         await this.gitClient.clone(repo.url, scanJob.workDir, token);
         appendLog('Clone successful.');
+        this.logger.log(`${tag} clone complete`);
       } catch (e) {
         await fail(`CLONE_FAILED: Failed to clone repository: ${toMessage(e)}`);
         return;
@@ -182,6 +192,9 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         return;
       }
 
+      this.logger.log(
+        `${tag} detected: pm=${detection.packageManager}, test=${detection.testFramework}, coverage=${detection.coverageFramework}, ts-files=${detection.totalTsFiles}`,
+      );
       appendLog(
         `Detected: packageManager=${detection.packageManager}, testFramework=${detection.testFramework}, coverageFramework=${detection.coverageFramework}`,
       );
@@ -205,12 +218,14 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       // ── INSTALLING ─────────────────────────────────────────────────────────
       await transition(ScanStatus.INSTALLING);
       const installCmd = this.getInstallCommand(detection.packageManager);
+      this.logger.log(`${tag} installing: ${installCmd}`);
       appendLog(`Installing dependencies: ${installCmd}`);
 
       try {
         const { stdout, stderr } = await this.runCmd(installCmd, scanJob.workDir);
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
+        this.logger.log(`${tag} install complete`);
         appendLog('Installation complete.');
       } catch (e) {
         if (isExecError(e)) {
@@ -233,6 +248,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
           const vitestVersion = this.getInstalledPackageVersion(scanJob.workDir, 'vitest');
           const coveragePkgSpec = vitestVersion ? `${coveragePkg}@${vitestVersion}` : coveragePkg;
           const coverageInstallCmd = this.getCoverageProviderInstallCommand(detection.packageManager, coveragePkgSpec);
+          this.logger.warn(`${tag} coverage provider missing — installing: ${coverageInstallCmd}`);
           appendLog(`Installing missing coverage provider: ${coverageInstallCmd}`);
           try {
             const { stdout, stderr } = await this.runCmd(coverageInstallCmd, scanJob.workDir);
@@ -259,6 +275,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         detection.testFramework,
         scanJob.workDir,
         appendLog,
+        tag,
       );
 
       if (result.ok === false) {
@@ -311,6 +328,12 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       }
 
       // ── COMPLETE ───────────────────────────────────────────────────────────
+      this.logger.log(
+        `${tag} scan COMPLETE — files=${coverageFileRecords.length}` +
+          (parseResult.totalCoverage !== null
+            ? `, total=${parseResult.totalCoverage.toFixed(1)}%`
+            : ''),
+      );
       appendLog('Scan complete.');
       await this.scanJobRepo.update(scanJob.id, {
         status: ScanStatus.COMPLETE,
@@ -332,12 +355,14 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
     testFramework: TestFramework,
     workDir: string,
     appendLog: (line: string) => void,
+    tag: string,
   ): Promise<CoverageRunResult> {
     const scripts = packageJson?.scripts || {};
 
     // Step 1: scripts.test:coverage
     if (scripts['test:coverage']) {
       const cmd = this.getRunScriptCommand(packageManager, 'test:coverage');
+      this.logger.log(`${tag} running coverage: ${cmd}`);
       appendLog(`Running: ${cmd}`);
       try {
         const { stdout, stderr } = await this.runCmd(cmd, workDir);
@@ -353,11 +378,13 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       }
       const found = this.coverageParser.findCoverageSummary(workDir);
       if (found) return { ok: true, summaryPath: found };
+      this.logger.warn(`${tag} coverage-summary.json not found after test:coverage — falling back to step 3`);
       appendLog('coverage-summary.json not found after test:coverage — falling back to step 3.');
       // Fall through to step 3 (skip step 2)
     } else if (scripts['coverage']) {
       // Step 2: scripts.coverage (only if step 1 did not exist)
       const cmd = this.getRunScriptCommand(packageManager, 'coverage');
+      this.logger.log(`${tag} running coverage: ${cmd}`);
       appendLog(`Running: ${cmd}`);
       let step2Failed = false;
       try {
@@ -369,12 +396,14 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
           if (e.stdout) appendLog(e.stdout);
           if (e.stderr) appendLog(e.stderr);
         }
+        this.logger.warn(`${tag} coverage script failed — falling back to step 3`);
         appendLog('coverage script failed with non-zero exit — falling back to step 3.');
         step2Failed = true;
       }
       if (!step2Failed) {
         const found = this.coverageParser.findCoverageSummary(workDir);
         if (found) return { ok: true, summaryPath: found };
+        this.logger.warn(`${tag} coverage-summary.json not found after coverage script — falling back to step 3`);
         appendLog('coverage-summary.json not found after coverage script — falling back to step 3.');
       }
       // Fall through to step 3
@@ -389,6 +418,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         ? `${envPrefix}npx jest --coverage --coverageReporters=json-summary`
         : `${envPrefix}npx vitest run --coverage --coverage.reporter=json-summary`;
 
+    this.logger.log(`${tag} running coverage fallback: ${fallbackCmd}`);
     appendLog(`Running fallback: ${fallbackCmd}`);
     try {
       const { stdout, stderr } = await this.runCmd(fallbackCmd, workDir);

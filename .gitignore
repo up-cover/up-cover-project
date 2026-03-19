@@ -21,6 +21,9 @@ workspaces/
 .DS_Store
 Thumbs.db
 
+# Personal learning docs
+docs/learning/
+
 # Logs
 *.log
 npm-debug.log*

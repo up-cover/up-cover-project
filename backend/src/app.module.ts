@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { HealthModule } from './health/health.module';
 import { RepositoriesModule } from './repositories/repositories.module';
 import { ScanModule } from './scan/scan.module';
+import { ImprovementModule } from './improvement/improvement.module';
 import { SseModule } from './sse/sse.module';
 import {
   RepositoryEntity,
@@ -35,6 +36,7 @@ import {
     HealthModule,
     RepositoriesModule,
     ScanModule,
+    ImprovementModule,
   ],
   controllers: [AppController],
 })

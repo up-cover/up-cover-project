@@ -47,3 +47,28 @@ export interface ApiError {
   error: string;
   message: string;
 }
+
+export type ImprovementStatus =
+  | 'QUEUED'
+  | 'CLONING'
+  | 'GENERATING'
+  | 'TESTING'
+  | 'PUSHING'
+  | 'CREATING_PR'
+  | 'COMPLETE'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface ImprovementJob {
+  id: string;
+  repositoryId: string;
+  filePath: string;
+  status: ImprovementStatus;
+  branchName: string | null;
+  prUrl: string | null;
+  errorMessage: string | null;
+  logOutput: string;
+  testsPass: boolean | null;
+  createdAt: string;
+  updatedAt: string;
+}

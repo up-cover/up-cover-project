@@ -105,12 +105,13 @@ export function RepoDetailPage() {
           </div>
         )}
 
-        {filesPage && (
+        {filesPage && id && (
           <CoverageFileTable
             files={filesPage.items}
             total={filesPage.total}
             page={filesPage.page}
             limit={filesPage.limit}
+            repositoryId={id}
             onPageChange={setPage}
           />
         )}
