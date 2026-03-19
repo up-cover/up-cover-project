@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Repository } from '../types/repository';
 import { useSSE } from '../hooks/useSSE';
-import { startScan, fetchScanLog } from '../api/repositories';
+import { startScan, fetchScanLog, deleteRepository } from '../api/repositories';
 import { DebugLog } from './DebugLog';
 
 const pct = (n: number) => `${Number(n.toFixed(2))}%`;
@@ -19,6 +19,11 @@ const ACTIVE_STATUSES = new Set<Repository['scanStatus']>([
 
 interface RepoCardProps {
   repository: Repository;
+  /** Number of child sub-project repos (monorepo parents only) */
+  childCount?: number;
+  onRemoved?: () => void;
+  /** Called when a scan transitions to COMPLETE — use to refresh the repo list */
+  onScanComplete?: () => void;
 }
 
 function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
@@ -39,11 +44,12 @@ function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
 }
 
 
-export function RepoCard({ repository: initial }: RepoCardProps) {
+export function RepoCard({ repository: initial, childCount = 0, onRemoved, onScanComplete }: RepoCardProps) {
   const [repo, setRepo] = useState<Repository>(initial);
   const [logs, setLogs] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   // Load persisted log on mount (backend only returns lines when DEBUG_OUTPUT=true)
   useEffect(() => {
@@ -54,7 +60,13 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
 
   useSSE(`/api/sse/repositories/${repo.id}`, {
     'repo:updated': (data) => {
-      setRepo((r) => ({ ...r, ...(data as Partial<Repository>) }));
+      setRepo((r) => {
+        const updated = { ...r, ...(data as Partial<Repository>) };
+        if (updated.scanStatus === 'COMPLETE' && r.scanStatus !== 'COMPLETE') {
+          onScanComplete?.();
+        }
+        return updated;
+      });
     },
     'scan:log': (data) => {
       const line =
@@ -66,6 +78,21 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
       setLogs((prev) => [...prev, line]);
     },
   });
+
+  const handleRemove = async () => {
+    if (!window.confirm('Remove this repository and all its data?')) return;
+    setActionError(null);
+    setRemoving(true);
+    try {
+      await deleteRepository(repo.id);
+      onRemoved?.();
+    } catch (err) {
+      const apiErr = err as { message?: string };
+      setActionError(apiErr.message ?? 'Failed to remove repository.');
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const handleScan = async () => {
     setActionError(null);
@@ -81,12 +108,14 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
     }
   };
 
-  const { owner, name, url, scanStatus, scanError } = repo;
+  const { owner, name, url, scanStatus, scanError, subPath } = repo;
   const isActive = ACTIVE_STATUSES.has(scanStatus);
+  const isMonorepoParent = childCount > 0;
+  const isChild = subPath !== null;
+
+  const displayTitle = isChild ? `${owner}/${name} \u203a ${subPath}` : `${owner}/${name}`;
 
   const fields: { label: string; value: React.ReactNode }[] = [
-    { label: 'Owner', value: owner },
-    { label: 'Repository', value: name },
     {
       label: 'URL',
       value: (
@@ -100,40 +129,45 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
         </a>
       ),
     },
-    { label: 'Has TypeScript', value: 'true' },
-    { label: 'Total TS files', value: repo.totalTsFiles ?? '—' },
-    {
-      label: 'Package manager',
-      value: repo.packageManager ? <Badge variant="success">{repo.packageManager}</Badge> : '—',
-    },
-    {
-      label: 'Test framework',
-      value: repo.testFramework ? <Badge variant="success">{repo.testFramework}</Badge> : '—',
-    },
-    {
-      label: 'Coverage framework',
-      value: repo.coverageFramework ? <Badge variant="success">{repo.coverageFramework}</Badge> : '—',
-    },
-    {
-      label: 'Total TS coverage',
-      value: repo.totalCoverage != null ? pct(repo.totalCoverage) : '—',
-    },
-    {
-      label: 'Avg TS coverage',
-      value: repo.avgCoverage != null ? pct(repo.avgCoverage) : '—',
-    },
-    {
-      label: 'Min TS coverage',
-      value: repo.minCoverage != null ? pct(repo.minCoverage.pct) : '—',
-    },
+    ...(isChild ? [{ label: 'Sub-project', value: <Badge variant="muted">{subPath}</Badge> }] : []),
+    ...(!isMonorepoParent ? [
+      { label: 'Total TS files', value: repo.totalTsFiles ?? '—' },
+      {
+        label: 'Package manager',
+        value: repo.packageManager ? <Badge variant="success">{repo.packageManager}</Badge> : '—',
+      },
+      {
+        label: 'Test framework',
+        value: repo.testFramework ? <Badge variant="success">{repo.testFramework}</Badge> : '—',
+      },
+      {
+        label: 'Coverage framework',
+        value: repo.coverageFramework ? <Badge variant="success">{repo.coverageFramework}</Badge> : '—',
+      },
+      {
+        label: 'Total TS coverage',
+        value: repo.totalCoverage != null ? pct(repo.totalCoverage) : '—',
+      },
+      {
+        label: 'Avg TS coverage',
+        value: repo.avgCoverage != null ? pct(repo.avgCoverage) : '—',
+      },
+      {
+        label: 'Min TS coverage',
+        value: repo.minCoverage != null ? pct(repo.minCoverage.pct) : '—',
+      },
+    ] : [
+      { label: 'Sub-projects', value: `${childCount} detected` },
+    ]),
     { label: 'Scan status', value: <ScanStatusBadge status={scanStatus} /> },
   ];
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-base font-semibold">
-          {owner}/{name}
+        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+          {displayTitle}
+          {isMonorepoParent && <Badge variant="muted">Monorepo</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -161,12 +195,12 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
         {logs.length > 0 && <DebugLog lines={logs} />}
 
         <div className="flex items-center gap-2 pt-1">
-          {(scanStatus === 'NOT_STARTED' || scanStatus === 'FAILED') && (
+          {!isMonorepoParent && (scanStatus === 'NOT_STARTED' || scanStatus === 'FAILED') && (
             <Button size="sm" variant="default" onClick={handleScan} disabled={starting}>
               {starting ? 'Starting…' : scanStatus === 'FAILED' ? 'Rescan' : 'Start Scan'}
             </Button>
           )}
-          {scanStatus === 'COMPLETE' && (
+          {scanStatus === 'COMPLETE' && !isMonorepoParent && (
             <Link
               to={`/repos/${repo.id}`}
               className={buttonVariants({ variant: 'outline', size: 'sm' })}
@@ -177,6 +211,9 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
           {isActive && (
             <span className="text-xs text-gray-400">Scan in progress…</span>
           )}
+          <Button size="sm" variant="outline" onClick={handleRemove} disabled={removing || isActive}>
+            {removing ? 'Removing…' : 'Remove'}
+          </Button>
         </div>
       </CardContent>
     </Card>

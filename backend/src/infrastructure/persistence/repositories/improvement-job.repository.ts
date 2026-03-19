@@ -49,6 +49,7 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
     if (partial.errorMessage !== undefined) entity.errorMessage = partial.errorMessage;
     if (partial.logOutput !== undefined) entity.logOutput = partial.logOutput;
     if (partial.testsPass !== undefined) entity.testsPass = partial.testsPass;
+    if (partial.newCoveragePct !== undefined) entity.newCoveragePct = partial.newCoveragePct;
     const saved = await this.orm.save(entity);
     return this.toDomain(saved);
   }
@@ -69,6 +70,7 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
       errorMessage: entity.errorMessage,
       logOutput: entity.logOutput,
       testsPass: entity.testsPass,
+      newCoveragePct: entity.newCoveragePct,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     };
@@ -86,6 +88,7 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
     entity.errorMessage = domain.errorMessage;
     entity.logOutput = domain.logOutput;
     entity.testsPass = domain.testsPass;
+    entity.newCoveragePct = domain.newCoveragePct;
     return entity;
   }
 }

@@ -16,6 +16,7 @@ import {
   DetectionResult,
   UnsupportedTestFrameworkError,
 } from '../domain/services/framework-detector';
+import { SubProjectDiscovery } from '../domain/services/sub-project-discovery';
 import { CoverageParser, CoverageParseResult } from '../domain/services/coverage-parser';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
@@ -53,6 +54,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
     private readonly gitClient: GitClient,
     private readonly frameworkDetector: FrameworkDetector,
     private readonly coverageParser: CoverageParser,
+    private readonly subProjectDiscovery: SubProjectDiscovery,
     private readonly repositoryRepo: RepositoryRepository,
     private readonly scanJobRepo: ScanJobRepository,
     private readonly coverageFileRepo: CoverageFileRepository,
@@ -176,13 +178,64 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         return;
       }
 
+      // For child repos (sub-projects), run inside the sub-directory of the clone
+      const effectiveWorkDir = repo.subPath
+        ? path.join(scanJob.workDir, repo.subPath)
+        : scanJob.workDir;
+
       // ── SCANNING ───────────────────────────────────────────────────────────
       await transition(ScanStatus.SCANNING);
+
+      // Monorepo discovery — only for top-level repos (not already a sub-project)
+      if (repo.subPath === null) {
+        const subProjects = this.subProjectDiscovery.discover(scanJob.workDir);
+        if (subProjects.length > 0) {
+          appendLog(`Monorepo detected: ${subProjects.length} sub-project(s) found.`);
+          for (const sp of subProjects) {
+            appendLog(`  → ${sp.subPath}`);
+          }
+
+          for (const sp of subProjects) {
+            const childRepo = await this.repositoryRepo.save({
+              id: uuidv4(),
+              owner: repo.owner,
+              name: repo.name,
+              url: repo.url,
+              hasTypeScript: repo.hasTypeScript,
+              parentRepositoryId: repo.id,
+              subPath: sp.subPath,
+              totalTsFiles: null,
+              packageManager: null,
+              testFramework: null,
+              coverageFramework: null,
+              totalCoverage: null,
+              avgCoverage: null,
+              minCoverage: null,
+              scanStatus: ScanStatus.NOT_STARTED,
+              scanError: null,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+            this.logger.log(`${tag} created child repo ${childRepo.id} for sub-project: ${sp.subPath}`);
+            void this.startScan(childRepo.id);
+          }
+
+          appendLog('Monorepo discovery complete. Child scans started.');
+          await this.scanJobRepo.update(scanJob.id, { status: ScanStatus.COMPLETE, logOutput: log });
+          await this.repositoryRepo.update(repo.id, { scanStatus: ScanStatus.COMPLETE });
+          this.sseEmitter.emit(`repo:${repo.id}`, 'repo:updated', {
+            id: repo.id,
+            scanStatus: ScanStatus.COMPLETE,
+          });
+          return;
+        }
+      }
+
       appendLog('Detecting framework...');
 
       let detection: DetectionResult;
       try {
-        detection = this.frameworkDetector.detect(scanJob.workDir);
+        detection = this.frameworkDetector.detect(effectiveWorkDir);
       } catch (e) {
         if (e instanceof UnsupportedTestFrameworkError) {
           await fail(`UNSUPPORTED_TEST_FRAMEWORK: ${e.message}`);
@@ -222,7 +275,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       appendLog(`Installing dependencies: ${installCmd}`);
 
       try {
-        const { stdout, stderr } = await this.runCmd(installCmd, scanJob.workDir);
+        const { stdout, stderr } = await this.runCmd(installCmd, effectiveWorkDir);
         if (stdout) appendLog(stdout);
         if (stderr) appendLog(stderr);
         this.logger.log(`${tag} install complete`);
@@ -242,16 +295,16 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         const coveragePkg = detection.coverageFramework === CoverageFramework.ISTANBUL
           ? '@vitest/coverage-istanbul'
           : '@vitest/coverage-v8';
-        const coveragePkgDir = path.join(scanJob.workDir, 'node_modules', coveragePkg);
+        const coveragePkgDir = path.join(effectiveWorkDir, 'node_modules', coveragePkg);
         if (!fs.existsSync(coveragePkgDir)) {
           // Pin to the exact installed vitest version to avoid peer dependency mismatches
-          const vitestVersion = this.getInstalledPackageVersion(scanJob.workDir, 'vitest');
+          const vitestVersion = this.getInstalledPackageVersion(effectiveWorkDir, 'vitest');
           const coveragePkgSpec = vitestVersion ? `${coveragePkg}@${vitestVersion}` : coveragePkg;
           const coverageInstallCmd = this.getCoverageProviderInstallCommand(detection.packageManager, coveragePkgSpec);
           this.logger.warn(`${tag} coverage provider missing — installing: ${coverageInstallCmd}`);
           appendLog(`Installing missing coverage provider: ${coverageInstallCmd}`);
           try {
-            const { stdout, stderr } = await this.runCmd(coverageInstallCmd, scanJob.workDir);
+            const { stdout, stderr } = await this.runCmd(coverageInstallCmd, effectiveWorkDir);
             if (stdout) appendLog(stdout);
             if (stderr) appendLog(stderr);
           } catch (e) {
@@ -273,7 +326,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
         detection.packageJson,
         detection.packageManager,
         detection.testFramework,
-        scanJob.workDir,
+        effectiveWorkDir,
         appendLog,
         tag,
       );
@@ -294,7 +347,7 @@ export class ScanOrchestrator implements OnApplicationBootstrap {
       // ── PARSE & PERSIST ────────────────────────────────────────────────────
       let parseResult: CoverageParseResult;
       try {
-        parseResult = this.coverageParser.parse(result.summaryPath, scanJob.workDir);
+        parseResult = this.coverageParser.parse(result.summaryPath, effectiveWorkDir);
       } catch (e) {
         await fail(`COVERAGE_PARSE_FAILED: ${toMessage(e)}`);
         return;

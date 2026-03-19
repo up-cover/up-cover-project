@@ -11,6 +11,7 @@ export interface IImprovementJob {
   errorMessage: string | null;
   logOutput: string;
   testsPass: boolean | null;
+  newCoveragePct: number | null;
   createdAt: Date;
   updatedAt: Date;
 }

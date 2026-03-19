@@ -114,6 +114,7 @@ function CoverageFileRow({ file, repositoryId }: CoverageFileRowProps) {
                 <ImprovementJobEntry
                   key={job.id}
                   initialJob={job}
+                  originalCoveragePct={file.coveragePct}
                   onJobUpdated={handleJobUpdated}
                   onRemoved={handleJobRemoved}
                 />

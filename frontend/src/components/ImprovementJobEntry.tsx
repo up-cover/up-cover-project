@@ -24,13 +24,25 @@ function JobStatusBadge({ status }: { status: ImprovementStatus }) {
   return <Badge variant={variant}>{label}</Badge>;
 }
 
+function CoverageDeltaBadge({ newPct, originalPct }: { newPct: number; originalPct: number }) {
+  const diff = newPct - originalPct;
+  const variant = diff > 0.005 ? 'success' : diff < -0.005 ? 'destructive' : 'warning';
+  const arrow = diff > 0.005 ? '↑' : diff < -0.005 ? '↓' : '→';
+  return (
+    <Badge variant={variant} title={`Original: ${originalPct.toFixed(1)}%`}>
+      {newPct.toFixed(1)}% {arrow}
+    </Badge>
+  );
+}
+
 interface ImprovementJobEntryProps {
   initialJob: ImprovementJob;
+  originalCoveragePct: number;
   onJobUpdated: (job: ImprovementJob) => void;
   onRemoved: (jobId: string) => void;
 }
 
-export function ImprovementJobEntry({ initialJob, onJobUpdated, onRemoved }: ImprovementJobEntryProps) {
+export function ImprovementJobEntry({ initialJob, originalCoveragePct, onJobUpdated, onRemoved }: ImprovementJobEntryProps) {
   const [job, setJob] = useState<ImprovementJob>(initialJob);
   const [logs, setLogs] = useState<string[]>(() =>
     initialJob.logOutput ? initialJob.logOutput.split('\n').filter((l) => l.length > 0) : [],
@@ -70,6 +82,9 @@ export function ImprovementJobEntry({ initialJob, onJobUpdated, onRemoved }: Imp
     <div className="flex flex-col gap-1.5 py-2 border-b border-gray-100 last:border-0">
       <div className="flex items-center gap-2 text-xs flex-wrap">
         <JobStatusBadge status={job.status} />
+        {job.testsPass === true && job.newCoveragePct !== null && (
+          <CoverageDeltaBadge newPct={job.newCoveragePct} originalPct={originalCoveragePct} />
+        )}
         <span className="text-gray-400 font-mono">{job.id.slice(0, 8)}</span>
         {job.status === 'COMPLETE' && job.prUrl && (
           <a

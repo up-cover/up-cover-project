@@ -17,9 +17,10 @@ These files are a split of `OUTLINE.md` to make it easier to stay within Claude�
 
 ## Recommended “feed order” to Claude Code
 
-1) Paste `00_GLOBAL_RULES.md` first.  
-2) Paste the one contract file relevant to your current work (API/domain/UI/etc.).  
-3) Paste **only the specific stage** you’re implementing right now from `09_BUILD_STAGES.md` (copy just that stage subsection).
+1. Paste `00_GLOBAL_RULES.md` first.
+2. Paste the one contract file relevant to your current work (API/domain/UI/etc.).
+3. Paste **only the specific stage** you’re implementing right now from `09_BUILD_STAGES.md` (copy just that stage subsection).
+   03
 
 ### Example bundles
 
@@ -38,4 +39,3 @@ Implement Stage <X> only.
 - If anything is underspecified, choose the simplest implementation that satisfies constraints.
 - Output: create/modify files as needed. After changes, list the files touched.
 ```
-

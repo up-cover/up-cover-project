@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Param, Query, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Delete, Param, Query, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { RepositoriesService } from './repositories.service';
 import { RegisterRepositoryDto } from './dto/register-repository.dto';
 
@@ -35,5 +35,11 @@ export class RepositoriesController {
   async getScanLog(@Param('id') id: string) {
     const lines = await this.repositoriesService.getScanLog(id);
     return { lines };
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async remove(@Param('id') id: string): Promise<void> {
+    return this.repositoriesService.delete(id);
   }
 }

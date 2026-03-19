@@ -32,6 +32,10 @@ export class ScanJobRepository implements IScanJobRepository {
     return entity ? this.toDomain(entity) : null;
   }
 
+  async deleteByRepositoryId(repositoryId: string): Promise<void> {
+    await this.orm.delete({ repositoryId });
+  }
+
   async findAllFailed(): Promise<IScanJob[]> {
     const { ScanStatus } = await import('../../../domain/enums/scan-status.enum');
     const entities = await this.orm.find({ where: { status: ScanStatus.FAILED } });

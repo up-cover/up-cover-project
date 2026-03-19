@@ -40,10 +40,19 @@ export class RepositoryRepository implements IRepositoryRepository {
     return entity ? this.toDomain(entity) : null;
   }
 
+  async findByParentRepositoryId(parentId: string): Promise<IRepository[]> {
+    const entities = await this.orm.findBy({ parentRepositoryId: parentId });
+    return entities.map(this.toDomain);
+  }
+
   async save(repository: IRepository): Promise<IRepository> {
     const entity = this.toEntity(repository);
     const saved = await this.orm.save(entity);
     return this.toDomain(saved);
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.orm.delete({ id });
   }
 
   async update(id: string, partial: Partial<IRepository>): Promise<IRepository> {
@@ -65,6 +74,8 @@ export class RepositoryRepository implements IRepositoryRepository {
       name: entity.name,
       url: entity.url,
       hasTypeScript: entity.hasTypeScript,
+      parentRepositoryId: entity.parentRepositoryId,
+      subPath: entity.subPath,
       totalTsFiles: entity.totalTsFiles,
       packageManager: entity.packageManager,
       testFramework: entity.testFramework,
@@ -86,6 +97,8 @@ export class RepositoryRepository implements IRepositoryRepository {
     entity.name = domain.name;
     entity.url = domain.url;
     entity.hasTypeScript = domain.hasTypeScript;
+    entity.parentRepositoryId = domain.parentRepositoryId;
+    entity.subPath = domain.subPath;
     entity.totalTsFiles = domain.totalTsFiles;
     entity.packageManager = domain.packageManager;
     entity.testFramework = domain.testFramework;
@@ -103,6 +116,8 @@ export class RepositoryRepository implements IRepositoryRepository {
     entity: RepositoryEntity,
     partial: Partial<IRepository>,
   ): RepositoryEntity {
+    if (partial.parentRepositoryId !== undefined) entity.parentRepositoryId = partial.parentRepositoryId;
+    if (partial.subPath !== undefined) entity.subPath = partial.subPath;
     if (partial.totalTsFiles !== undefined) entity.totalTsFiles = partial.totalTsFiles;
     if (partial.packageManager !== undefined) entity.packageManager = partial.packageManager;
     if (partial.testFramework !== undefined) entity.testFramework = partial.testFramework;

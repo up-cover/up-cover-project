@@ -4,6 +4,8 @@ export interface Repository {
   name: string;
   url: string;
   hasTypeScript: boolean;
+  parentRepositoryId: string | null;
+  subPath: string | null;
   totalTsFiles: number | null;
   packageManager: 'npm' | 'yarn' | 'pnpm' | null;
   testFramework: 'jest' | 'vitest' | null;
@@ -69,6 +71,7 @@ export interface ImprovementJob {
   errorMessage: string | null;
   logOutput: string;
   testsPass: boolean | null;
+  newCoveragePct: number | null;
   createdAt: string;
   updatedAt: string;
 }

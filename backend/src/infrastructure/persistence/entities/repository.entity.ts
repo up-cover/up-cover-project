@@ -27,6 +27,12 @@ export class RepositoryEntity {
   @Column({ name: 'has_typescript', type: 'integer' })
   hasTypeScript: boolean;
 
+  @Column({ name: 'parent_repository_id', type: 'text', nullable: true })
+  parentRepositoryId: string | null;
+
+  @Column({ name: 'sub_path', type: 'text', nullable: true })
+  subPath: string | null;
+
   @Column({ name: 'total_ts_files', type: 'integer', nullable: true })
   totalTsFiles: number | null;
 

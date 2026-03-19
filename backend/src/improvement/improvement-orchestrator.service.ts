@@ -18,6 +18,7 @@ import { LLM_CLIENT } from '../infrastructure/llm/llm-client.token';
 import { ImprovementJobRepository } from '../infrastructure/persistence/repositories/improvement-job.repository';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
+import { CoverageParser } from '../domain/services/coverage-parser';
 import { JobQueueService } from './job-queue.service';
 
 class ExecError extends Error {
@@ -60,6 +61,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
     private readonly coverageFileRepo: CoverageFileRepository,
     private readonly jobQueueService: JobQueueService,
     private readonly sseEmitter: SseEmitter,
+    private readonly coverageParser: CoverageParser,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -130,6 +132,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       errorMessage: null,
       logOutput: '',
       testsPass: null,
+      newCoveragePct: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -389,7 +392,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
       if (isCancelled()) return;
 
-      // Run scoped tests
+      // Run scoped tests (no coverage flags — determines pass/fail)
       const testCmd = this.getScopedTestCommand(testFramework, testFilePath);
       this.logger.log(`${tag} running tests: ${testCmd}`);
       appendLog(`Running tests: ${testCmd}`);
@@ -420,6 +423,46 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       await this.improvementJobRepo.update(job.id, { testsPass: true }).catch(() => {});
       this.logger.log(`${tag} tests passed`);
       appendLog('Tests passed.');
+
+      // ── COVERAGE CAPTURE (non-fatal) ─────────────────────────────────────────
+      // Run separately so a missing coverage provider does not fail the job.
+      let newCoveragePct: number | null = null;
+      try {
+        await this.installCoverageProviderIfNeeded(testFramework, packageManager, job.workDir, appendLog, tag, job.id);
+
+        const coverageCmd = this.getCoverageTestCommand(testFramework, testFilePath);
+        appendLog(`Collecting coverage: ${coverageCmd}`);
+        try {
+          const { stdout, stderr } = await this.runCmd(coverageCmd, job.workDir, job.id);
+          if (stdout) appendLog(stdout);
+          if (stderr) appendLog(stderr);
+        } catch (e) {
+          if (isCancelled()) return;
+          appendLog(`Warning: coverage run exited non-zero — skipping coverage capture.`);
+          if (isExecError(e)) {
+            if (e.stdout) appendLog(e.stdout);
+            if (e.stderr) appendLog(e.stderr);
+          }
+        }
+
+        if (!isCancelled()) {
+          const summaryPath = this.coverageParser.findCoverageSummary(job.workDir);
+          if (summaryPath) {
+            const { coverageFiles } = this.coverageParser.parse(summaryPath, job.workDir);
+            newCoveragePct = this.extractFileCoverage(coverageFiles, job.filePath);
+          }
+          if (newCoveragePct !== null) {
+            appendLog(`New coverage for ${job.filePath}: ${newCoveragePct.toFixed(2)}%`);
+            await this.improvementJobRepo.update(job.id, { newCoveragePct }).catch(() => {});
+            this.sseEmitter.emit(`job:${job.id}`, 'job:updated', { id: job.id, newCoveragePct });
+          } else {
+            appendLog('Could not determine new coverage from coverage-summary.json.');
+          }
+        }
+      } catch (e) {
+        appendLog(`Warning: coverage capture failed: ${toMessage(e)}`);
+        this.logger.warn(`${tag} coverage capture failed: ${toMessage(e)}`);
+      }
 
       // ── PUSHING ──────────────────────────────────────────────────────────────
       await transition(ImprovementStatus.PUSHING);
@@ -687,12 +730,83 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
     }
   }
 
+  private extractFileCoverage(
+    coverageFiles: Array<{ filePath: string; coveragePct: number }>,
+    jobFilePath: string,
+  ): number | null {
+    const normalize = (p: string) => p.replace(/^\.\//, '');
+    const target = normalize(jobFilePath);
+    for (const f of coverageFiles) {
+      if (normalize(f.filePath) === target) return f.coveragePct;
+    }
+    // Fallback: match by filename + parent directory
+    const targetBase = path.basename(target);
+    const targetParent = path.basename(path.dirname(target));
+    for (const f of coverageFiles) {
+      const fNorm = normalize(f.filePath);
+      if (
+        path.basename(fNorm) === targetBase &&
+        path.basename(path.dirname(fNorm)) === targetParent
+      ) {
+        return f.coveragePct;
+      }
+    }
+    return null;
+  }
+
+  private async installCoverageProviderIfNeeded(
+    testFramework: TestFramework,
+    packageManager: PackageManager,
+    workDir: string,
+    appendLog: (line: string) => void,
+    tag: string,
+    jobId: string,
+  ): Promise<void> {
+    if (testFramework !== TestFramework.VITEST) return;
+
+    const hasV8 = fs.existsSync(path.join(workDir, 'node_modules/@vitest/coverage-v8'));
+    const hasIstanbul = fs.existsSync(path.join(workDir, 'node_modules/@vitest/coverage-istanbul'));
+    if (hasV8 || hasIstanbul) return;
+
+    const installCmd = this.getCoverageProviderInstallCommand(packageManager);
+    appendLog(`Installing coverage provider: ${installCmd}`);
+    this.logger.log(`${tag} installing coverage provider: ${installCmd}`);
+    try {
+      const { stdout, stderr } = await this.runCmd(installCmd, workDir, jobId);
+      if (stdout) appendLog(stdout);
+      if (stderr) appendLog(stderr);
+    } catch (e) {
+      appendLog(`Warning: could not install coverage provider: ${toMessage(e)}`);
+      this.logger.warn(`${tag} coverage provider install failed: ${toMessage(e)}`);
+    }
+  }
+
+  private getCoverageProviderInstallCommand(packageManager: PackageManager): string {
+    switch (packageManager) {
+      case PackageManager.PNPM:
+        return 'pnpm add --save-dev @vitest/coverage-v8';
+      case PackageManager.YARN:
+        return 'yarn add --dev @vitest/coverage-v8';
+      case PackageManager.NPM:
+        return 'npm install --save-dev @vitest/coverage-v8';
+    }
+  }
+
   private getScopedTestCommand(testFramework: TestFramework, testFilePath: string): string {
     switch (testFramework) {
       case TestFramework.JEST:
         return `npx jest ${testFilePath} --passWithNoTests`;
       case TestFramework.VITEST:
         return `npx vitest run ${testFilePath}`;
+    }
+  }
+
+  private getCoverageTestCommand(testFramework: TestFramework, testFilePath: string): string {
+    switch (testFramework) {
+      case TestFramework.JEST:
+        return `npx jest ${testFilePath} --passWithNoTests --coverage --coverageReporters=json-summary`;
+      case TestFramework.VITEST:
+        return `npx vitest run ${testFilePath} --coverage --coverage.reporter=json-summary`;
     }
   }
 

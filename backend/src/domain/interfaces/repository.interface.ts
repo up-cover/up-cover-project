@@ -14,6 +14,8 @@ export interface IRepository {
   name: string;
   url: string;
   hasTypeScript: boolean;
+  parentRepositoryId: string | null;
+  subPath: string | null;
   totalTsFiles: number | null;
   packageManager: PackageManager | null;
   testFramework: TestFramework | null;
@@ -32,6 +34,8 @@ export interface IRepositoryRepository {
   findAllInProgress(): Promise<IRepository[]>;
   findById(id: string): Promise<IRepository | null>;
   findByOwnerAndName(owner: string, name: string): Promise<IRepository | null>;
+  findByParentRepositoryId(parentId: string): Promise<IRepository[]>;
   save(repository: IRepository): Promise<IRepository>;
   update(id: string, partial: Partial<IRepository>): Promise<IRepository>;
+  delete(id: string): Promise<void>;
 }

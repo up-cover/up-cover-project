@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RepoInputForm } from '../components/RepoInputForm';
 import { RepoCard } from '../components/RepoCard';
@@ -9,15 +9,29 @@ export function LandingPage() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchRepos = useCallback(() => {
     listRepositories()
       .then(setRepositories)
       .catch(() => setLoadError('Failed to load repositories.'));
   }, []);
 
+  useEffect(() => {
+    fetchRepos();
+  }, [fetchRepos]);
+
   const handleRegistered = (repo: Repository) => {
     setRepositories((prev) => [repo, ...prev]);
   };
+
+  const parentRepos = repositories.filter((r) => r.parentRepositoryId === null);
+  const childrenByParent = new Map<string, Repository[]>();
+  for (const r of repositories) {
+    if (r.parentRepositoryId !== null) {
+      const arr = childrenByParent.get(r.parentRepositoryId) ?? [];
+      arr.push(r);
+      childrenByParent.set(r.parentRepositoryId, arr);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -45,13 +59,41 @@ export function LandingPage() {
             </div>
           )}
 
-          {repositories.length === 0 && !loadError && (
+          {parentRepos.length === 0 && !loadError && (
             <p className="text-sm text-gray-400">No repositories added yet.</p>
           )}
 
-          {repositories.map((repo) => (
-            <RepoCard key={repo.id} repository={repo} />
-          ))}
+          {parentRepos.map((repo) => {
+            const children = childrenByParent.get(repo.id) ?? [];
+            return (
+              <div key={repo.id} className="space-y-2">
+                <RepoCard
+                  repository={repo}
+                  childCount={children.length}
+                  onRemoved={() =>
+                    setRepositories((prev) =>
+                      prev.filter((r) => r.id !== repo.id && r.parentRepositoryId !== repo.id),
+                    )
+                  }
+                  onScanComplete={fetchRepos}
+                />
+                {children.length > 0 && (
+                  <div className="ml-6 space-y-2">
+                    {children.map((child) => (
+                      <RepoCard
+                        key={child.id}
+                        repository={child}
+                        onRemoved={() =>
+                          setRepositories((prev) => prev.filter((r) => r.id !== child.id))
+                        }
+                        onScanComplete={fetchRepos}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </section>
       </div>
     </div>

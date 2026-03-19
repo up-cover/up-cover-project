@@ -6,6 +6,7 @@ import { CleanupService } from './cleanup.service';
 import { GitClient } from '../infrastructure/git/git-client';
 import { FrameworkDetector } from '../domain/services/framework-detector';
 import { CoverageParser } from '../domain/services/coverage-parser';
+import { SubProjectDiscovery } from '../domain/services/sub-project-discovery';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
 import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
@@ -24,6 +25,7 @@ import { CoverageFileEntity } from '../infrastructure/persistence/entities/cover
     GitClient,
     FrameworkDetector,
     CoverageParser,
+    SubProjectDiscovery,
     RepositoryRepository,
     ScanJobRepository,
     CoverageFileRepository,

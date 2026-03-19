@@ -15,6 +15,7 @@ import { CoverageFileRepository } from '../infrastructure/persistence/repositori
 import { ImprovementJobEntity } from '../infrastructure/persistence/entities/improvement-job.entity';
 import { RepositoryEntity } from '../infrastructure/persistence/entities/repository.entity';
 import { CoverageFileEntity } from '../infrastructure/persistence/entities/coverage-file.entity';
+import { CoverageParser } from '../domain/services/coverage-parser';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CoverageFileEntity } from '../infrastructure/persistence/entities/cover
     ImprovementJobRepository,
     RepositoryRepository,
     CoverageFileRepository,
+    CoverageParser,
   ],
   exports: [ImprovementJobRepository],
 })

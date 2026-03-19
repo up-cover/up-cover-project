@@ -90,7 +90,9 @@ export function RepoDetailPage() {
       {repo && (
         <section className="space-y-3">
           <h1 className="text-xl font-semibold">
-            {repo.owner}/{repo.name}
+            {repo.subPath
+              ? `${repo.owner}/${repo.name} \u203a ${repo.subPath}`
+              : `${repo.owner}/${repo.name}`}
           </h1>
           <MetaGrid repo={repo} />
         </section>

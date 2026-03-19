@@ -1,12 +1,21 @@
-import { Injectable, HttpException, HttpStatus, NotFoundException } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, NotFoundException, ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Octokit } from '@octokit/rest';
 import { randomUUID } from 'crypto';
+import * as fs from 'fs';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
 import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
+import { ImprovementJobRepository } from '../infrastructure/persistence/repositories/improvement-job.repository';
 import { IRepository, ICoverageFile } from '../domain/interfaces';
 import { ScanStatus } from '../domain/enums/scan-status.enum';
+
+const ACTIVE_SCAN_STATUSES = new Set<ScanStatus>([
+  ScanStatus.CLONING,
+  ScanStatus.SCANNING,
+  ScanStatus.INSTALLING,
+  ScanStatus.TESTING,
+]);
 
 @Injectable()
 export class RepositoriesService {
@@ -17,6 +26,7 @@ export class RepositoriesService {
     private readonly repoRepository: RepositoryRepository,
     private readonly scanJobRepository: ScanJobRepository,
     private readonly coverageFileRepository: CoverageFileRepository,
+    private readonly improvementJobRepository: ImprovementJobRepository,
     private readonly configService: ConfigService,
   ) {
     const token = this.configService.get<string>('GITHUB_TOKEN');
@@ -110,6 +120,8 @@ export class RepositoriesService {
       name: repo,
       url: `https://github.com/${owner}/${repo}`,
       hasTypeScript: true,
+      parentRepositoryId: null,
+      subPath: null,
       totalTsFiles: null,
       packageManager: null,
       testFramework: null,
@@ -152,5 +164,52 @@ export class RepositoriesService {
     const job = await this.scanJobRepository.findLatestByRepositoryId(repositoryId);
     if (!job?.logOutput) return [];
     return job.logOutput.split('\n').filter((l) => l.length > 0);
+  }
+
+  async delete(id: string): Promise<void> {
+    const repo = await this.repoRepository.findById(id);
+    if (!repo) throw new NotFoundException(`Repository ${id} not found`);
+
+    if (ACTIVE_SCAN_STATUSES.has(repo.scanStatus)) {
+      throw new ConflictException('Cannot remove repository while a scan is in progress.');
+    }
+
+    // Cascade-delete child repos (sub-projects of a monorepo parent)
+    const children = await this.repoRepository.findByParentRepositoryId(id);
+    for (const child of children) {
+      await this.deleteRepoData(child.id);
+      await this.repoRepository.delete(child.id);
+    }
+
+    await this.deleteRepoData(id);
+    await this.repoRepository.delete(id);
+  }
+
+  private async deleteRepoData(id: string): Promise<void> {
+    const improvementJobs = await this.improvementJobRepository.findByRepositoryId(id);
+    for (const job of improvementJobs) {
+      if (job.workDir && fs.existsSync(job.workDir)) {
+        try {
+          fs.rmSync(job.workDir, { recursive: true, force: true });
+        } catch {
+          // best-effort
+        }
+      }
+      await this.improvementJobRepository.delete(job.id);
+    }
+
+    const scanJobs = await this.scanJobRepository.findByRepositoryId(id);
+    for (const scanJob of scanJobs) {
+      if (scanJob.workDir && fs.existsSync(scanJob.workDir)) {
+        try {
+          fs.rmSync(scanJob.workDir, { recursive: true, force: true });
+        } catch {
+          // best-effort
+        }
+      }
+    }
+
+    await this.scanJobRepository.deleteByRepositoryId(id);
+    await this.coverageFileRepository.deleteByRepositoryId(id);
   }
 }
