@@ -34,4 +34,5 @@ export interface IRepositoryRepository {
   findByOwnerAndName(owner: string, name: string): Promise<IRepository | null>;
   save(repository: IRepository): Promise<IRepository>;
   update(id: string, partial: Partial<IRepository>): Promise<IRepository>;
+  delete(id: string): Promise<void>;
 }

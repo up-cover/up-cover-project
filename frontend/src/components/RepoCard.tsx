@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Repository } from '../types/repository';
 import { useSSE } from '../hooks/useSSE';
-import { startScan, fetchScanLog } from '../api/repositories';
+import { startScan, fetchScanLog, deleteRepository } from '../api/repositories';
 import { DebugLog } from './DebugLog';
 
 const pct = (n: number) => `${Number(n.toFixed(2))}%`;
@@ -19,6 +19,7 @@ const ACTIVE_STATUSES = new Set<Repository['scanStatus']>([
 
 interface RepoCardProps {
   repository: Repository;
+  onRemove?: () => void;
 }
 
 function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
@@ -39,10 +40,11 @@ function ScanStatusBadge({ status }: { status: Repository['scanStatus'] }) {
 }
 
 
-export function RepoCard({ repository: initial }: RepoCardProps) {
+export function RepoCard({ repository: initial, onRemove }: RepoCardProps) {
   const [repo, setRepo] = useState<Repository>(initial);
   const [logs, setLogs] = useState<string[]>([]);
   const [starting, setStarting] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
   // Load persisted log on mount (backend only returns lines when DEBUG_OUTPUT=true)
@@ -66,6 +68,19 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
       setLogs((prev) => [...prev, line]);
     },
   });
+
+  const handleRemove = async () => {
+    setActionError(null);
+    setRemoving(true);
+    try {
+      await deleteRepository(repo.id);
+      onRemove?.();
+    } catch {
+      setActionError('Failed to remove repository.');
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const handleScan = async () => {
     setActionError(null);
@@ -177,6 +192,15 @@ export function RepoCard({ repository: initial }: RepoCardProps) {
           {isActive && (
             <span className="text-xs text-gray-400">Scan in progress…</span>
           )}
+          <Button
+            size="sm"
+            variant="destructive"
+            onClick={handleRemove}
+            disabled={isActive || removing}
+            className="ml-auto"
+          >
+            {removing ? 'Removing…' : 'Remove'}
+          </Button>
         </div>
       </CardContent>
     </Card>

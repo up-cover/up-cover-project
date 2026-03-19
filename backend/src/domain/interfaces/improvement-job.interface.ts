@@ -25,4 +25,5 @@ export interface IImprovementJobRepository {
   save(job: IImprovementJob): Promise<IImprovementJob>;
   update(id: string, partial: Partial<IImprovementJob>): Promise<IImprovementJob>;
   delete(id: string): Promise<void>;
+  deleteByRepositoryId(repositoryId: string): Promise<void>;
 }

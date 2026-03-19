@@ -74,6 +74,11 @@ export async function deleteImprovementJob(jobId: string): Promise<void> {
   if (!res.ok) throw new Error('Failed to cancel improvement job.');
 }
 
+export async function deleteRepository(id: string): Promise<void> {
+  const res = await fetch(`/api/repositories/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to remove repository.');
+}
+
 export async function startScan(id: string): Promise<void> {
   const res = await fetch(`/api/repositories/${id}/scan`, { method: 'POST' });
   if (!res.ok) {

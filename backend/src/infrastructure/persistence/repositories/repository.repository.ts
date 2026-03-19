@@ -46,6 +46,10 @@ export class RepositoryRepository implements IRepositoryRepository {
     return this.toDomain(saved);
   }
 
+  async delete(id: string): Promise<void> {
+    await this.orm.delete({ id });
+  }
+
   async update(id: string, partial: Partial<IRepository>): Promise<IRepository> {
     const entity = await this.orm.findOneByOrFail({ id });
     const updated = this.applyPartial(entity, partial);

@@ -60,6 +60,10 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
     await this.orm.delete({ id });
   }
 
+  async deleteByRepositoryId(repositoryId: string): Promise<void> {
+    await this.orm.delete({ repositoryId });
+  }
+
   private toDomain(entity: ImprovementJobEntity): IImprovementJob {
     return {
       id: entity.id,

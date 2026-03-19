@@ -63,7 +63,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
     private readonly coverageFileRepo: CoverageFileRepository,
     private readonly jobQueueService: JobQueueService,
     private readonly sseEmitter: SseEmitter,
-  ) {}
+  ) { }
 
   async onApplicationBootstrap(): Promise<void> {
     // Mark any in-progress improvement jobs as FAILED (server restarted mid-run).
@@ -95,7 +95,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
               status: ImprovementStatus.FAILED,
               errorMessage: 'INTERRUPTED: Server restarted while job was in progress.',
             })
-            .catch(() => {});
+            .catch(() => { });
           this.sseEmitter.emit(`job:${job.id}`, 'job:updated', {
             id: job.id,
             status: ImprovementStatus.FAILED,
@@ -193,7 +193,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
     await this.improvementJobRepo
       .update(jobId, { status: ImprovementStatus.CANCELLED })
-      .catch(() => {});
+      .catch(() => { });
 
     this.cleanupWorkspace(job.workDir);
 
@@ -241,7 +241,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
           errorMessage,
           logOutput: log,
         })
-        .catch(() => {});
+        .catch(() => { });
       this.sseEmitter.emit(`job:${job.id}`, 'job:updated', {
         id: job.id,
         status: ImprovementStatus.FAILED,
@@ -251,7 +251,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
     const transition = async (status: ImprovementStatus) => {
       this.logger.log(`${tag} → ${status}`);
-      await this.improvementJobRepo.update(job.id, { status, logOutput: log }).catch(() => {});
+      await this.improvementJobRepo.update(job.id, { status, logOutput: log }).catch(() => { });
       this.sseEmitter.emit(`job:${job.id}`, 'job:updated', { id: job.id, status });
     };
 
@@ -333,10 +333,10 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       const llmProvider = this.configService.get<string>('LLM_PROVIDER', 'ollama');
       this.logger.log(
         `${tag} requesting LLM (provider=${llmProvider})` +
-          (existingTestContent ? ' — existing test found' : ' — no existing test') +
-          (relatedFiles.length > 0 ? `, related=${relatedFiles.length}` : ''),
+        (existingTestContent ? ' — existing test found' : ' — no existing test') +
+        (relatedFiles.length > 0 ? `, related=${relatedFiles.length}` : ''),
       );
-      appendLog(`Generating tests for ${coverageFile.filePath} via Ollama...`);
+      appendLog(`Generating tests for ${coverageFile.filePath} via ${llmProvider}...`);
       appendLog(`Test file target: ${testFilePath}`);
 
       let generatedContent: string;
@@ -456,10 +456,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
       await this.improvementJobRepo
         .update(job.id, { coverageBeforePct })
-        .catch(() => {});
+        .catch(() => { });
       appendLog(
-        `Baseline coverage for ${coverageFile.filePath}: ${
-          coverageBeforePct != null ? `${coverageBeforePct.toFixed(2)}%` : '—'
+        `Baseline coverage for ${coverageFile.filePath}: ${coverageBeforePct != null ? `${coverageBeforePct.toFixed(2)}%` : '—'
         }`,
       );
 
@@ -491,12 +490,12 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       if (testsFailed) {
         await this.improvementJobRepo
           .update(job.id, { testsPass: false, logOutput: log })
-          .catch(() => {});
+          .catch(() => { });
         await fail('GENERATED_TESTS_FAIL: Generated tests do not pass. Review the log output and try again.');
         return;
       }
 
-      await this.improvementJobRepo.update(job.id, { testsPass: true }).catch(() => {});
+      await this.improvementJobRepo.update(job.id, { testsPass: true }).catch(() => { });
       this.logger.log(`${tag} tests passed`);
       appendLog('Tests passed.');
 
@@ -540,13 +539,11 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
       await this.improvementJobRepo
         .update(job.id, { coverageAfterPct, coverageDeltaPct })
-        .catch(() => {});
+        .catch(() => { });
 
       appendLog(
-        `After coverage for ${coverageFile.filePath}: ${
-          coverageAfterPct != null ? `${coverageAfterPct.toFixed(2)}%` : '—'
-        } (Δ${
-          coverageDeltaPct != null ? `${coverageDeltaPct.toFixed(2)}%` : '—'
+        `After coverage for ${coverageFile.filePath}: ${coverageAfterPct != null ? `${coverageAfterPct.toFixed(2)}%` : '—'
+        } (Δ${coverageDeltaPct != null ? `${coverageDeltaPct.toFixed(2)}%` : '—'
         })`,
       );
 
@@ -633,7 +630,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
           coverageAfterPct,
           coverageDeltaPct,
         })
-        .catch(() => {});
+        .catch(() => { });
 
       this.sseEmitter.emit(`job:${job.id}`, 'job:updated', {
         id: job.id,

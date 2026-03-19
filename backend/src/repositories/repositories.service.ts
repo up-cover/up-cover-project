@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { ScanJobRepository } from '../infrastructure/persistence/repositories/scan-job.repository';
 import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
+import { ImprovementJobRepository } from '../infrastructure/persistence/repositories/improvement-job.repository';
 import { IRepository, ICoverageFile } from '../domain/interfaces';
 import { ScanStatus } from '../domain/enums/scan-status.enum';
 
@@ -17,6 +18,7 @@ export class RepositoriesService {
     private readonly repoRepository: RepositoryRepository,
     private readonly scanJobRepository: ScanJobRepository,
     private readonly coverageFileRepository: CoverageFileRepository,
+    private readonly improvementJobRepository: ImprovementJobRepository,
     private readonly configService: ConfigService,
   ) {
     const token = this.configService.get<string>('GITHUB_TOKEN');
@@ -124,6 +126,15 @@ export class RepositoriesService {
     };
 
     return this.repoRepository.save(repository);
+  }
+
+  async deleteRepository(id: string): Promise<void> {
+    const repo = await this.repoRepository.findById(id);
+    if (!repo) throw new NotFoundException(`Repository ${id} not found`);
+    await this.coverageFileRepository.deleteByRepositoryId(id);
+    await this.improvementJobRepository.deleteByRepositoryId(id);
+    await this.scanJobRepository.deleteByRepositoryId(id);
+    await this.repoRepository.delete(id);
   }
 
   async findAll(): Promise<IRepository[]> {
