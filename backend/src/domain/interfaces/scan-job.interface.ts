@@ -17,4 +17,5 @@ export interface IScanJobRepository {
   findLatestByRepositoryId(repositoryId: string): Promise<IScanJob | null>;
   save(scanJob: IScanJob): Promise<IScanJob>;
   update(id: string, partial: Partial<IScanJob>): Promise<IScanJob>;
+  deleteByRepositoryId(repositoryId: string): Promise<void>;
 }

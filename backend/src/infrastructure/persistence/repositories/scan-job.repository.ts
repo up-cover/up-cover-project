@@ -38,6 +38,10 @@ export class ScanJobRepository implements IScanJobRepository {
     return entities.map(this.toDomain);
   }
 
+  async deleteByRepositoryId(repositoryId: string): Promise<void> {
+    await this.orm.delete({ repositoryId });
+  }
+
   async save(scanJob: IScanJob): Promise<IScanJob> {
     const entity = this.toEntity(scanJob);
     const saved = await this.orm.save(entity);

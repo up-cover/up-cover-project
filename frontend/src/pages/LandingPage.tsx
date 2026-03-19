@@ -50,7 +50,11 @@ export function LandingPage() {
           )}
 
           {repositories.map((repo) => (
-            <RepoCard key={repo.id} repository={repo} />
+            <RepoCard
+              key={repo.id}
+              repository={repo}
+              onRemove={() => setRepositories((prev) => prev.filter((r) => r.id !== repo.id))}
+            />
           ))}
         </section>
       </div>
