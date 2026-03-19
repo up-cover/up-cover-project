@@ -8,6 +8,11 @@ import { DebugLog } from './DebugLog';
 
 const TERMINAL_STATUSES = new Set<ImprovementStatus>(['COMPLETE', 'FAILED', 'CANCELLED']);
 
+function formatDeltaPct(n: number): string {
+  const sign = n > 0 ? '+' : '';
+  return `${sign}${Number(n.toFixed(2))}%`;
+}
+
 function JobStatusBadge({ status }: { status: ImprovementStatus }) {
   const map: Record<ImprovementStatus, { label: string; variant: React.ComponentProps<typeof Badge>['variant'] }> = {
     QUEUED: { label: 'queued', variant: 'muted' },
@@ -80,6 +85,14 @@ export function ImprovementJobEntry({ initialJob, onJobUpdated, onRemoved }: Imp
           >
             View PR →
           </a>
+        )}
+        {job.status === 'COMPLETE' && (
+          <span className="text-xs text-gray-500 font-mono">
+            Δ{' '}
+            {job.coverageDeltaPct != null
+              ? formatDeltaPct(job.coverageDeltaPct)
+              : '—'}
+          </span>
         )}
         <div className="ml-auto">
           <Button size="sm" variant="outline" onClick={handleRemove} disabled={removing}>

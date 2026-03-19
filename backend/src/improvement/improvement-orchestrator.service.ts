@@ -6,6 +6,7 @@ import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { SseEmitter } from '../sse/sse-emitter.service';
 import { ImprovementStatus } from '../domain/enums/improvement-status.enum';
+import { CoverageFramework } from '../domain/enums/coverage-framework.enum';
 import { PackageManager } from '../domain/enums/package-manager.enum';
 import { TestFramework } from '../domain/enums/test-framework.enum';
 import { IImprovementJob } from '../domain/interfaces/improvement-job.interface';
@@ -15,6 +16,7 @@ import { GitClient } from '../infrastructure/git/git-client';
 import { GitHubClient } from '../infrastructure/github/github-client';
 import { LlmClient } from '../infrastructure/llm/llm-client';
 import { LLM_CLIENT } from '../infrastructure/llm/llm-client.token';
+import { CoverageParser } from '../domain/services/coverage-parser';
 import { ImprovementJobRepository } from '../infrastructure/persistence/repositories/improvement-job.repository';
 import { RepositoryRepository } from '../infrastructure/persistence/repositories/repository.repository';
 import { CoverageFileRepository } from '../infrastructure/persistence/repositories/coverage-file.repository';
@@ -57,6 +59,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
     @Inject(LLM_CLIENT) private readonly llmClient: LlmClient,
     private readonly improvementJobRepo: ImprovementJobRepository,
     private readonly repositoryRepo: RepositoryRepository,
+    private readonly coverageParser: CoverageParser,
     private readonly coverageFileRepo: CoverageFileRepository,
     private readonly jobQueueService: JobQueueService,
     private readonly sseEmitter: SseEmitter,
@@ -130,6 +133,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       errorMessage: null,
       logOutput: '',
       testsPass: null,
+      coverageBeforePct: null,
+      coverageAfterPct: null,
+      coverageDeltaPct: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -212,6 +218,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
     const botEmail = this.configService.get<string>('GIT_BOT_EMAIL', 'upcover@local');
     const fileSizeLimitKb = this.configService.get<number>('FILE_SIZE_LIMIT_KB', 200);
     const tag = `[improve:${job.id.slice(0, 8)}]`;
+    let coverageBeforePct: number | null = null;
+    let coverageAfterPct: number | null = null;
+    let coverageDeltaPct: number | null = null;
 
     const appendLog = (line: string) => {
       log += line + '\n';
@@ -308,6 +317,7 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
         job.workDir,
         coverageFile.filePath,
       );
+      const testFileAbsPath = path.join(job.workDir, testFilePath);
       const contributingMd = this.readFileIfExists(path.join(job.workDir, 'CONTRIBUTING.md'));
       const agentsMd =
         this.readFileIfExists(path.join(job.workDir, 'AGENTS.md')) ??
@@ -360,11 +370,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
 
       if (isCancelled()) return;
 
-      // Write the generated test file
-      const testFileAbsPath = path.join(job.workDir, testFilePath);
-      fs.mkdirSync(path.dirname(testFileAbsPath), { recursive: true });
-      fs.writeFileSync(testFileAbsPath, generatedContent, 'utf-8');
-      appendLog(`Test file written to ${testFilePath}`);
+      // Do not write the test file yet: we run "before" coverage first
+      // so the delta reflects the new/updated test content.
+      appendLog(`Test file content generated (pending write to ${testFilePath})`);
 
       // ── TESTING ──────────────────────────────────────────────────────────────
       await transition(ImprovementStatus.TESTING);
@@ -388,6 +396,77 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       }
 
       if (isCancelled()) return;
+
+      // Install vitest coverage provider if needed (vitest requires @vitest/coverage-v8 or
+      // @vitest/coverage-istanbul for json-summary reports).
+      if (testFramework === TestFramework.VITEST) {
+        const coverageFramework = repo.coverageFramework ?? CoverageFramework.V8;
+        try {
+          await this.ensureVitestCoverageProviderInstalled(
+            job.workDir,
+            packageManager,
+            coverageFramework,
+            tag,
+            appendLog,
+            job.id,
+          );
+        } catch (e) {
+          await fail(`INSTALL_FAILED: Failed to install vitest coverage provider: ${toMessage(e)}`);
+          return;
+        }
+      }
+
+      if (isCancelled()) return;
+
+      // ── COVERAGE (before) ───────────────────────────────────────────────
+      this.deleteCoverageSummaryArtifacts(job.workDir);
+      appendLog('Running baseline coverage...');
+      const beforeCoverage = await this.runCoverageWithFallback(
+        packageJson,
+        packageManager,
+        testFramework,
+        job.workDir,
+        appendLog,
+        tag,
+        job.id,
+      );
+      if (beforeCoverage.ok === false || !beforeCoverage.summaryPath) {
+        if (beforeCoverage.reason === 'command_failed') {
+          await fail(
+            'COVERAGE_BEFORE_FAILED: Test run failed — no coverage report was produced. See log output for details.',
+          );
+          return;
+        }
+        await fail(
+          'COVERAGE_BEFORE_FAILED: coverage-summary.json was not produced. The repo must be configured to emit json-summary.',
+        );
+        return;
+      }
+
+      try {
+        coverageBeforePct = this.getCoveragePctForFileFromSummary(
+          beforeCoverage.summaryPath,
+          job.workDir,
+          coverageFile.filePath,
+        );
+      } catch (e) {
+        await fail(`COVERAGE_BEFORE_PARSE_FAILED: ${toMessage(e)}`);
+        return;
+      }
+
+      await this.improvementJobRepo
+        .update(job.id, { coverageBeforePct })
+        .catch(() => {});
+      appendLog(
+        `Baseline coverage for ${coverageFile.filePath}: ${
+          coverageBeforePct != null ? `${coverageBeforePct.toFixed(2)}%` : '—'
+        }`,
+      );
+
+      // Write the generated test file now that the baseline is captured.
+      fs.mkdirSync(path.dirname(testFileAbsPath), { recursive: true });
+      fs.writeFileSync(testFileAbsPath, generatedContent, 'utf-8');
+      appendLog(`Test file written to ${testFilePath}`);
 
       // Run scoped tests
       const testCmd = this.getScopedTestCommand(testFramework, testFilePath);
@@ -420,6 +499,56 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       await this.improvementJobRepo.update(job.id, { testsPass: true }).catch(() => {});
       this.logger.log(`${tag} tests passed`);
       appendLog('Tests passed.');
+
+      // ── COVERAGE (after) ────────────────────────────────────────────────
+      this.deleteCoverageSummaryArtifacts(job.workDir);
+      appendLog('Running coverage after changes...');
+      const afterCoverage = await this.runCoverageWithFallback(
+        packageJson,
+        packageManager,
+        testFramework,
+        job.workDir,
+        appendLog,
+        tag,
+        job.id,
+      );
+      if (afterCoverage.ok === false || !afterCoverage.summaryPath) {
+        if (afterCoverage.reason === 'command_failed') {
+          await fail(
+            'COVERAGE_AFTER_FAILED: Test run failed — no coverage report was produced. See log output for details.',
+          );
+          return;
+        }
+        await fail(
+          'COVERAGE_AFTER_FAILED: coverage-summary.json was not produced. The repo must be configured to emit json-summary.',
+        );
+        return;
+      }
+
+      try {
+        coverageAfterPct = this.getCoveragePctForFileFromSummary(
+          afterCoverage.summaryPath,
+          job.workDir,
+          coverageFile.filePath,
+        );
+        coverageDeltaPct =
+          coverageBeforePct != null && coverageAfterPct != null ? coverageAfterPct - coverageBeforePct : null;
+      } catch (e) {
+        await fail(`COVERAGE_AFTER_PARSE_FAILED: ${toMessage(e)}`);
+        return;
+      }
+
+      await this.improvementJobRepo
+        .update(job.id, { coverageAfterPct, coverageDeltaPct })
+        .catch(() => {});
+
+      appendLog(
+        `After coverage for ${coverageFile.filePath}: ${
+          coverageAfterPct != null ? `${coverageAfterPct.toFixed(2)}%` : '—'
+        } (Δ${
+          coverageDeltaPct != null ? `${coverageDeltaPct.toFixed(2)}%` : '—'
+        })`,
+      );
 
       // ── PUSHING ──────────────────────────────────────────────────────────────
       await transition(ImprovementStatus.PUSHING);
@@ -458,6 +587,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
       try {
         const defaultBranch = await this.gitHubClient.getDefaultBranch(repo.owner, repo.name);
         const prTitle = `[UpCover] Improve test coverage for ${coverageFile.filePath}`;
+        const covBeforeStr = coverageBeforePct != null ? `${coverageBeforePct.toFixed(2)}%` : '—';
+        const covAfterStr = coverageAfterPct != null ? `${coverageAfterPct.toFixed(2)}%` : '—';
+        const covDeltaStr = coverageDeltaPct != null ? `${coverageDeltaPct.toFixed(2)}%` : '—';
         const prBody = [
           `## UpCover — Automated Test Coverage Improvement`,
           ``,
@@ -466,6 +598,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
           `| **File** | \`${coverageFile.filePath}\` |`,
           `| **Job ID** | \`${job.id}\` |`,
           `| **Branch** | \`${job.branchName}\` |`,
+          `| **Coverage (before)** | \`${covBeforeStr}\` |`,
+          `| **Coverage (after)** | \`${covAfterStr}\` |`,
+          `| **Coverage delta** | \`${covDeltaStr}\` |`,
           ``,
           `This pull request was generated automatically by [UpCover](https://github.com/up-cover/upcover).`,
         ].join('\n');
@@ -494,6 +629,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
           status: ImprovementStatus.COMPLETE,
           prUrl,
           logOutput: log,
+          coverageBeforePct,
+          coverageAfterPct,
+          coverageDeltaPct,
         })
         .catch(() => {});
 
@@ -501,6 +639,9 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
         id: job.id,
         status: ImprovementStatus.COMPLETE,
         prUrl,
+        coverageBeforePct,
+        coverageAfterPct,
+        coverageDeltaPct,
       });
 
       this.logger.log(`${tag} COMPLETE`);
@@ -693,6 +834,224 @@ export class ImprovementOrchestrator implements OnApplicationBootstrap {
         return `npx jest ${testFilePath} --passWithNoTests`;
       case TestFramework.VITEST:
         return `npx vitest run ${testFilePath}`;
+    }
+  }
+
+  private getRunScriptCommand(packageManager: PackageManager, script: string): string {
+    switch (packageManager) {
+      case PackageManager.PNPM:
+        return `pnpm run ${script}`;
+      case PackageManager.YARN:
+        return `yarn ${script}`;
+      case PackageManager.NPM:
+        return `npm run ${script}`;
+    }
+  }
+
+  /**
+   * Extracts leading KEY=VALUE env var assignments from the repo's test script
+   * so the fallback command can inherit them (e.g. NODE_OPTIONS=--experimental-vm-modules).
+   */
+  private extractEnvPrefix(scripts: Record<string, string>): string {
+    for (const key of ['test', 'ci-test']) {
+      const script = scripts[key];
+      if (!script) continue;
+      // Only apply when the script is running jest/vitest
+      if (!script.includes('jest') && !script.includes('vitest')) continue;
+      // Match one or more KEY=VALUE pairs at the start of the command
+      const m = script.match(/^((?:[A-Z_]+=\S+\s+)+)/);
+      if (m) return m[1];
+    }
+    return '';
+  }
+
+  private async runCoverageWithFallback(
+    packageJson: any,
+    packageManager: PackageManager,
+    testFramework: TestFramework,
+    workDir: string,
+    appendLog: (line: string) => void,
+    tag: string,
+    jobId: string,
+  ): Promise<{ ok: boolean; summaryPath?: string; reason?: string }> {
+    const scripts = packageJson?.scripts || {};
+
+    // Step 1: scripts.test:coverage
+    if (scripts['test:coverage']) {
+      const cmd = this.getRunScriptCommand(packageManager, 'test:coverage');
+      this.logger.log(`${tag} running coverage: ${cmd}`);
+      appendLog(`Running: ${cmd}`);
+      try {
+        const { stdout, stderr } = await this.runCmd(cmd, workDir, jobId);
+        if (stdout) appendLog(stdout);
+        if (stderr) appendLog(stderr);
+      } catch (e) {
+        if (isExecError(e)) {
+          if (e.stdout) appendLog(e.stdout);
+          if (e.stderr) appendLog(e.stderr);
+        }
+        appendLog('test:coverage failed with non-zero exit.');
+        return { ok: false, reason: 'command_failed' };
+      }
+      const found = this.coverageParser.findCoverageSummary(workDir);
+      if (found) return { ok: true, summaryPath: found };
+      this.logger.warn(`${tag} coverage-summary.json not found after test:coverage — falling back to step 3`);
+      appendLog('coverage-summary.json not found after test:coverage — falling back to step 3.');
+      // Fall through to step 3 (skip step 2)
+    } else if (scripts['coverage']) {
+      // Step 2: scripts.coverage (only if step 1 did not exist)
+      const cmd = this.getRunScriptCommand(packageManager, 'coverage');
+      this.logger.log(`${tag} running coverage: ${cmd}`);
+      appendLog(`Running: ${cmd}`);
+      let step2Failed = false;
+      try {
+        const { stdout, stderr } = await this.runCmd(cmd, workDir, jobId);
+        if (stdout) appendLog(stdout);
+        if (stderr) appendLog(stderr);
+      } catch (e) {
+        if (isExecError(e)) {
+          if (e.stdout) appendLog(e.stdout);
+          if (e.stderr) appendLog(e.stderr);
+        }
+        this.logger.warn(`${tag} coverage script failed — falling back to step 3`);
+        appendLog('coverage script failed with non-zero exit — falling back to step 3.');
+        step2Failed = true;
+      }
+      if (!step2Failed) {
+        const found = this.coverageParser.findCoverageSummary(workDir);
+        if (found) return { ok: true, summaryPath: found };
+        this.logger.warn(`${tag} coverage-summary.json not found after coverage script — falling back to step 3`);
+        appendLog('coverage-summary.json not found after coverage script — falling back to step 3.');
+      }
+      // Fall through to step 3
+    }
+
+    // Step 3: framework fallback
+    // Inherit env var prefixes (e.g. NODE_OPTIONS=--experimental-vm-modules) from the
+    // repo's test/ci-test script so ESM repos work correctly.
+    const envPrefix = this.extractEnvPrefix(scripts);
+    const fallbackCmd =
+      testFramework === TestFramework.JEST
+        ? `${envPrefix}npx jest --coverage --coverageReporters=json-summary`
+        : `${envPrefix}npx vitest run --coverage --coverage.reporter=json-summary`;
+
+    this.logger.log(`${tag} running coverage fallback: ${fallbackCmd}`);
+    appendLog(`Running fallback: ${fallbackCmd}`);
+    try {
+      const { stdout, stderr } = await this.runCmd(fallbackCmd, workDir, jobId);
+      if (stdout) appendLog(stdout);
+      if (stderr) appendLog(stderr);
+    } catch (e) {
+      if (isExecError(e)) {
+        if (e.stdout) appendLog(e.stdout);
+        if (e.stderr) appendLog(e.stderr);
+      }
+      appendLog('Fallback coverage command failed with non-zero exit.');
+      return { ok: false, reason: 'command_failed' };
+    }
+
+    const found = this.coverageParser.findCoverageSummary(workDir);
+    if (!found) {
+      appendLog('coverage-summary.json was not produced after fallback command.');
+      return { ok: false, reason: 'no_summary_found' };
+    }
+
+    return { ok: true, summaryPath: found };
+  }
+
+  private deleteCoverageSummaryArtifacts(workDir: string): void {
+    // Remove the common coverage output locations so we don't accidentally parse stale
+    // json-summary reports from the previous run.
+    try {
+      fs.rmSync(path.join(workDir, 'coverage'), { recursive: true, force: true });
+    } catch {
+      // Best-effort
+    }
+    try {
+      fs.rmSync(path.join(workDir, 'coverage-summary.json'), { force: true });
+    } catch {
+      // Best-effort
+    }
+    try {
+      const found = this.coverageParser.findCoverageSummary(workDir);
+      if (found) fs.rmSync(found, { force: true });
+    } catch {
+      // Best-effort
+    }
+  }
+
+  private normalizeCoveragePath(p: string): string {
+    return p.replace(/\\/g, '/').replace(/^\.\//, '');
+  }
+
+  private getCoveragePctForFileFromSummary(
+    summaryPath: string,
+    workDir: string,
+    filePath: string,
+  ): number | null {
+    const parseResult = this.coverageParser.parse(summaryPath, workDir);
+    const target = this.normalizeCoveragePath(filePath);
+    const hit = parseResult.coverageFiles.find((cf) => {
+      const candidate = this.normalizeCoveragePath(cf.filePath);
+      return candidate === target || candidate.endsWith(`/${target}`) || candidate.endsWith(target);
+    });
+    return hit ? hit.coveragePct : null;
+  }
+
+  private getInstalledPackageVersion(workDir: string, pkg: string): string | null {
+    try {
+      const pkgJson = path.join(workDir, 'node_modules', pkg, 'package.json');
+      const data = JSON.parse(fs.readFileSync(pkgJson, 'utf-8'));
+      return data.version ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private getCoverageProviderInstallCommand(packageManager: PackageManager, pkg: string): string {
+    switch (packageManager) {
+      case PackageManager.PNPM:
+        return `pnpm add -Dw ${pkg}`;
+      case PackageManager.YARN:
+        return `yarn add -D ${pkg}`;
+      case PackageManager.NPM:
+        return `npm install -D ${pkg}`;
+    }
+  }
+
+  private async ensureVitestCoverageProviderInstalled(
+    workDir: string,
+    packageManager: PackageManager,
+    coverageFramework: CoverageFramework,
+    tag: string,
+    appendLog: (line: string) => void,
+    jobId: string,
+  ): Promise<void> {
+    const coveragePkg =
+      coverageFramework === CoverageFramework.ISTANBUL
+        ? '@vitest/coverage-istanbul'
+        : '@vitest/coverage-v8';
+    const coveragePkgDir = path.join(workDir, 'node_modules', coveragePkg);
+    if (fs.existsSync(coveragePkgDir)) return;
+
+    // Pin to the exact installed vitest version to avoid peer dependency mismatches
+    const vitestVersion = this.getInstalledPackageVersion(workDir, 'vitest');
+    const coveragePkgSpec = vitestVersion ? `${coveragePkg}@${vitestVersion}` : coveragePkg;
+    const coverageInstallCmd = this.getCoverageProviderInstallCommand(packageManager, coveragePkgSpec);
+
+    this.logger.warn(`${tag} coverage provider missing — installing: ${coverageInstallCmd}`);
+    appendLog(`Installing missing coverage provider: ${coverageInstallCmd}`);
+
+    try {
+      const { stdout, stderr } = await this.runCmd(coverageInstallCmd, workDir, jobId);
+      if (stdout) appendLog(stdout);
+      if (stderr) appendLog(stderr);
+    } catch (e) {
+      if (isExecError(e)) {
+        if (e.stdout) appendLog(e.stdout);
+        if (e.stderr) appendLog(e.stderr);
+      }
+      throw e;
     }
   }
 

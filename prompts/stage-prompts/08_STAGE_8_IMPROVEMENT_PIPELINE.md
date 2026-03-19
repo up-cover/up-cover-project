@@ -14,6 +14,10 @@ Backend:
   - `DELETE /api/improvement-jobs/:jobId`
 - Implement `OllamaClient` (streaming) and enforce strict output rules (strip fences; fail if invalid TS).
 - Enforce test-generation contract and scoped test execution rules.
+- Compute **per-file** test coverage `coveragePct` (lines.pct only) **before** writing the generated test file and persist `coverageBeforePct` on the improvement job record.
+- After writing the generated test file and confirming scoped tests pass, rerun coverage and compute the **same file’s** `coveragePct` as `coverageAfterPct`, plus `coverageDeltaPct = after - before`; persist both on the improvement job record.
+- Ensure the coverage deltas are computed for `coverageFile.filePath` only (do not compute an aggregate delta).
+- Include `coverageBeforePct`, `coverageAfterPct`, and `coverageDeltaPct` in the pull request body (alongside the target file path).
 - Implement branch naming + PR creation rules; fail if branch already exists remotely.
 - Emit SSE events `job:updated` and `job:log` (logs only when `DEBUG_OUTPUT=true`).
 
