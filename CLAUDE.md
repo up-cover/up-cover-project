@@ -48,8 +48,11 @@ UpCover is a single-user, locally-hosted developer tool that:
 | `POST` | `/api/repositories` | Register repo (validates PAT + TypeScript) |
 | `GET` | `/api/repositories` | List repos |
 | `GET` | `/api/repositories/:id` | Repo detail |
+| `DELETE` | `/api/repositories/:id` | Delete repo and related data |
 | `POST` | `/api/repositories/:id/scan` | Start/restart scan |
+| `GET` | `/api/repositories/:id/scan-log` | Scan log lines (when DEBUG_OUTPUT=true) |
 | `GET` | `/api/repositories/:id/coverage-files` | Paginated coverage files |
+| `GET` | `/api/repositories/:id/files/:fileId/improvement-jobs` | List improvement jobs for file |
 | `POST` | `/api/repositories/:id/files/:fileId/improve` | Enqueue improvement job |
 | `DELETE` | `/api/improvement-jobs/:jobId` | Cancel job |
 
@@ -60,9 +63,9 @@ UpCover is a single-user, locally-hosted developer tool that:
 ## Domain Entities
 
 - **Repository** — owner, name, url, scan status, framework metadata, coverage aggregates
-- **ScanJob** — status, workDir, logOutput
+- **ScanJob** — status, workDir, errorMessage, logOutput
 - **CoverageFile** — filePath, coveragePct (lines), statements/branches/functions/lines %
-- **ImprovementJob** — status, branchName, prUrl, testsPass, logOutput
+- **ImprovementJob** — status, branchName, prUrl, testsPass, logOutput, coverageBeforePct, coverageAfterPct, coverageDeltaPct
 
 **Status enums:** `ScanStatus` (NOT_STARTED → CLONING → SCANNING → INSTALLING → TESTING → COMPLETE/FAILED), `ImprovementStatus` (QUEUED → CLONING → GENERATING → TESTING → PUSHING → CREATING_PR → COMPLETE/FAILED/CANCELLED)
 

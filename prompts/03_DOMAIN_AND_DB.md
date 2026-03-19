@@ -44,25 +44,29 @@ CoverageFile
   id:           UUID
   repositoryId: UUID (FK → Repository)
   filePath:     string              (relative to repo root)
-  coveragePct:  number              (min of statements/branches/functions/lines)
+  coveragePct:  number              (lines.pct only, per global rules)
   statements:   number              (%)
   branches:     number              (%)
   functions:    number              (%)
   lines:        number              (%)
+  fileSizeKb:   number | null       (source file size in KB, for Improve button gating)
 
 ImprovementJob
-  id:           UUID
-  repositoryId: UUID (FK → Repository)
-  filePath:     string              (relative to repo root)
-  status:       ImprovementStatus
-  workDir:      string
-  branchName:   string              (upcover/{jobId}/{file-slug})
-  prUrl:        string | null
-  errorMessage: string | null
-  logOutput:    string
-  testsPass:    boolean | null
-  createdAt:    Date
-  updatedAt:    Date
+  id:               UUID
+  repositoryId:     UUID (FK → Repository)
+  filePath:         string              (relative to repo root)
+  status:           ImprovementStatus
+  workDir:          string
+  branchName:       string              (upcover/{jobId}/{file-slug})
+  prUrl:            string | null
+  errorMessage:     string | null
+  logOutput:        string
+  testsPass:        boolean | null
+  coverageBeforePct: number | null       (lines % before generated test)
+  coverageAfterPct:  number | null       (lines % after generated test)
+  coverageDeltaPct:  number | null      (after − before)
+  createdAt:        Date
+  updatedAt:        Date
 ```
 
 ### Value Objects
@@ -79,7 +83,7 @@ ImprovementJob
 
 | Service | Responsibility |
 |---|---|
-| `FrameworkDetector` | Inspects cloned repo files to determine package manager, test framework, and coverage framework. Also detects monorepos. |
+| `FrameworkDetector` | Inspects cloned repo files to determine package manager, test framework, and coverage framework. |
 | `CoverageParser` | Reads `coverage-summary.json` and produces structured per-file coverage data. |
 | `PrNamingService` | Generates branch names (`upcover/{jobId}/{file-slug}`) and PR titles from a job ID and file path. |
 
@@ -151,11 +155,12 @@ ImprovementJob
 | `id` | TEXT (UUID) | PK |
 | `repository_id` | TEXT | FK → `repositories.id` |
 | `file_path` | TEXT | |
-| `coverage_pct` | REAL | min across all dimensions |
+| `coverage_pct` | REAL | lines.pct only (per global rules) |
 | `statements` | REAL | % |
 | `branches` | REAL | % |
 | `functions` | REAL | % |
 | `lines` | REAL | % |
+| `file_size_kb` | REAL | nullable, source file size for Improve gating |
 
 ### `improvement_jobs`
 
@@ -171,6 +176,9 @@ ImprovementJob
 | `error_message` | TEXT | nullable |
 | `log_output` | TEXT | |
 | `tests_pass` | INTEGER (bool) | nullable |
+| `coverage_before_pct` | REAL | nullable |
+| `coverage_after_pct` | REAL | nullable |
+| `coverage_delta_pct` | REAL | nullable |
 | `created_at` | TEXT | |
 | `updated_at` | TEXT | |
 

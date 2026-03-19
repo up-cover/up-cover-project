@@ -72,7 +72,7 @@ Non‑Functional
 
 **Requirement:** Scalability: serialize jobs per repository.
 
-> **How we achieved this:** `JobQueueService` maintains an in-memory FIFO queue keyed by `repositoryId`. Only one improvement job runs per repository at a time — new jobs are enqueued and wait until the running job reaches a terminal state. This prevents concurrent git operations on the same clone directory and ensures deterministic coverage measurements. On server restart, any `IN_PROGRESS` jobs are marked `FAILED` (handled in `ImprovementOrchestrator.onModuleInit`) so the queue starts clean.
+> **How we achieved this:** `JobQueueService` maintains an in-memory FIFO queue keyed by `repositoryId`. Only one improvement job runs per repository at a time — new jobs are enqueued and wait until the running job reaches a terminal state. This prevents concurrent git operations on the same clone directory and ensures deterministic coverage measurements. On server restart, any non-terminal jobs (QUEUED, CLONING, GENERATING, TESTING, PUSHING, CREATING_PR) are marked `FAILED` (handled in `ImprovementOrchestrator.onApplicationBootstrap`) so the queue starts clean.
 
 ---
 
@@ -120,7 +120,7 @@ Evaluation Criteria
 > `GitHubClient.createPullRequest()` uses Octokit to open PRs on the target repository. PR body includes a Markdown table with coverage before/after/delta, the job ID, and the branch name. The PR URL is stored and surfaced in the UI.
 
 **Reliability: resilient job handling and error recovery.**
-> Jobs transition to `FAILED` on any unhandled exception and the error message is persisted. On restart, orphaned `IN_PROGRESS` jobs are reset to `FAILED`. Per-repo serialisation prevents race conditions. Subprocess timeouts prevent hung jobs. `CleanupService` prevents disk exhaustion. SSE reconnects automatically on connection loss.
+> Jobs transition to `FAILED` on any unhandled exception and the error message is persisted. On restart, jobs in non-terminal states are marked `FAILED` with an INTERRUPTED message. Per-repo serialisation prevents race conditions. Subprocess timeouts prevent hung jobs. `CleanupService` prevents disk exhaustion. SSE reconnects automatically on connection loss.
 
 ---
 
