@@ -1,4 +1,4 @@
-import { Repository, CoverageFilesPage, ApiError } from '../types/repository';
+import { Repository, CoverageFilesPage, ApiError, ImprovementJob } from '../types/repository';
 
 export async function registerRepository(
   owner: string,
@@ -48,6 +48,30 @@ export async function fetchCoverageFiles(id: string, page = 1, limit = 50): Prom
   const res = await fetch(`/api/repositories/${id}/coverage-files?page=${page}&limit=${limit}`);
   if (!res.ok) throw new Error('Failed to load coverage files');
   return res.json();
+}
+
+export async function fetchImprovementJobsForFile(repoId: string, fileId: string): Promise<ImprovementJob[]> {
+  const res = await fetch(`/api/repositories/${repoId}/files/${fileId}/improvement-jobs`);
+  if (!res.ok) throw new Error('Failed to load improvement jobs');
+  return res.json();
+}
+
+export async function startImprovement(repoId: string, fileId: string): Promise<ImprovementJob> {
+  const res = await fetch(`/api/repositories/${repoId}/files/${fileId}/improve`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err: ApiError = {
+      error: (data as { error?: string }).error ?? 'UNKNOWN_ERROR',
+      message: (data as { message?: string }).message ?? 'Failed to start improvement job.',
+    };
+    throw err;
+  }
+  return res.json();
+}
+
+export async function deleteImprovementJob(jobId: string): Promise<void> {
+  const res = await fetch(`/api/improvement-jobs/${jobId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to cancel improvement job.');
 }
 
 export async function startScan(id: string): Promise<void> {
