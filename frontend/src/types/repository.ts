@@ -69,6 +69,9 @@ export interface ImprovementJob {
   errorMessage: string | null;
   logOutput: string;
   testsPass: boolean | null;
+  coverageBeforePct: number | null;
+  coverageAfterPct: number | null;
+  coverageDeltaPct: number | null;
   createdAt: string;
   updatedAt: string;
 }

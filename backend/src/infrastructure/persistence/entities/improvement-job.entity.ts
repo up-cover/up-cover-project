@@ -41,6 +41,15 @@ export class ImprovementJobEntity {
   @Column({ name: 'tests_pass', type: 'integer', nullable: true })
   testsPass: boolean | null;
 
+  @Column({ name: 'coverage_before_pct', type: 'real', nullable: true })
+  coverageBeforePct: number | null;
+
+  @Column({ name: 'coverage_after_pct', type: 'real', nullable: true })
+  coverageAfterPct: number | null;
+
+  @Column({ name: 'coverage_delta_pct', type: 'real', nullable: true })
+  coverageDeltaPct: number | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'text' })
   createdAt: Date;
 

@@ -10,6 +10,7 @@ Frontend:
 - Implement `ImprovementJobList` accordion per coverage file row.
 - Implement `ImprovementJobEntry` subscribing to `/api/sse/improvement-jobs/:jobId`.
 - Show status badges, error messages, PR link on COMPLETE, and Remove button calling `DELETE /api/improvement-jobs/:jobId`.
+- When `coverageDeltaPct` is present (computed by Stage 8), display it next to the PR link for COMPLETE jobs.
 - Implement `DebugLog` behavior for job logs (same spec; gated by `DEBUG_OUTPUT`).
 
 Constraints:

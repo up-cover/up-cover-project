@@ -11,6 +11,9 @@ export interface IImprovementJob {
   errorMessage: string | null;
   logOutput: string;
   testsPass: boolean | null;
+  coverageBeforePct: number | null;
+  coverageAfterPct: number | null;
+  coverageDeltaPct: number | null;
   createdAt: Date;
   updatedAt: Date;
 }

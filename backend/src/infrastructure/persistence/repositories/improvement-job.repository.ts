@@ -49,6 +49,9 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
     if (partial.errorMessage !== undefined) entity.errorMessage = partial.errorMessage;
     if (partial.logOutput !== undefined) entity.logOutput = partial.logOutput;
     if (partial.testsPass !== undefined) entity.testsPass = partial.testsPass;
+    if (partial.coverageBeforePct !== undefined) entity.coverageBeforePct = partial.coverageBeforePct;
+    if (partial.coverageAfterPct !== undefined) entity.coverageAfterPct = partial.coverageAfterPct;
+    if (partial.coverageDeltaPct !== undefined) entity.coverageDeltaPct = partial.coverageDeltaPct;
     const saved = await this.orm.save(entity);
     return this.toDomain(saved);
   }
@@ -69,6 +72,9 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
       errorMessage: entity.errorMessage,
       logOutput: entity.logOutput,
       testsPass: entity.testsPass,
+      coverageBeforePct: entity.coverageBeforePct,
+      coverageAfterPct: entity.coverageAfterPct,
+      coverageDeltaPct: entity.coverageDeltaPct,
       createdAt: entity.createdAt,
       updatedAt: entity.updatedAt,
     };
@@ -86,6 +92,9 @@ export class ImprovementJobRepository implements IImprovementJobRepository {
     entity.errorMessage = domain.errorMessage;
     entity.logOutput = domain.logOutput;
     entity.testsPass = domain.testsPass;
+    entity.coverageBeforePct = domain.coverageBeforePct;
+    entity.coverageAfterPct = domain.coverageAfterPct;
+    entity.coverageDeltaPct = domain.coverageDeltaPct;
     return entity;
   }
 }
